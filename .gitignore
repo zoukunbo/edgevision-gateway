@@ -1,3 +1,34 @@
+# CMake out-of-source build directories
 /build/
+/build-*/
+/cmake-build-*/
+
+# CTest output accidentally generated at the repository root
+/Testing/
+
+# CMake/Ninja user-local generated files
+/CMakeUserPresets.json
+/compile_commands.json
+/.ninja_deps
+/.ninja_log
+
+# Logs and crash dumps
 *.log
 *.log.*
+/core
+/core.*
+
+# Compiler intermediate files
+*.o
+
+# Local network example binaries compiled directly in the source directory
+/examples/net/tcp_server
+/examples/net/tcp_client
+/examples/net/tcp_sigpipe_server
+/examples/net/tcp_sigpipe_client
+/examples/net/udp_server
+/examples/net/udp_client
+
+# Local test binaries compiled directly in the repository root
+/net_module_test
+/net_stress_test
