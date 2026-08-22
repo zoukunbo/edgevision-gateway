@@ -126,12 +126,16 @@ edgevision_enable_warnings(edgevision_runtime)
 add_library(edgevision_net STATIC
     modules/net/address.c
     modules/net/socket.c
+    modules/net/network_client.c
 )
 target_include_directories(edgevision_net PUBLIC
     modules/net
 )
 target_compile_definitions(edgevision_net PRIVATE
     _POSIX_C_SOURCE=200809L
+)
+target_link_libraries(edgevision_net PUBLIC
+    Threads::Threads
 )
 edgevision_enable_warnings(edgevision_net)
 
@@ -196,6 +200,18 @@ foreach(example IN LISTS EDGEVISION_NET_EXAMPLES)
     )
     edgevision_enable_warnings(${example})
 endforeach()
+
+# NetworkClient 可复用模块的最小生命周期示例。
+add_executable(network_client_demo
+    examples/NetworkClient.c
+)
+target_compile_definitions(network_client_demo PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+target_link_libraries(network_client_demo PRIVATE
+    edgevision_net
+)
+edgevision_enable_warnings(network_client_demo)
 
 # -----------------------------------------------------------------------------
 # 自动测试（CTest）
