@@ -127,6 +127,7 @@ add_library(edgevision_net STATIC
     modules/net/address.c
     modules/net/socket.c
     modules/net/network_client.c
+    modules/net/epoll_echo_server.c
 )
 target_include_directories(edgevision_net PUBLIC
     modules/net
