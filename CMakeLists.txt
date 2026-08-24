@@ -140,6 +140,17 @@ target_link_libraries(edgevision_net PUBLIC
 )
 edgevision_enable_warnings(edgevision_net)
 
+# 自定义TCP帧编码、增量解析和CRC16-Modbus。
+add_library(edgevision_protocol STATIC
+    modules/protocol/frame.c
+)
+
+target_include_directories(edgevision_protocol PUBLIC
+    modules/protocol
+)
+
+edgevision_enable_warnings(edgevision_protocol)
+
 # -----------------------------------------------------------------------------
 # 主程序目标
 # -----------------------------------------------------------------------------
@@ -162,6 +173,7 @@ target_link_libraries(gateway PRIVATE
     edgevision_log
     edgevision_runtime
     edgevision_net
+    edgevision_protocol
 )
 edgevision_enable_warnings(gateway)
 
@@ -204,7 +216,7 @@ endforeach()
 
 # NetworkClient 可复用模块的最小生命周期示例。
 add_executable(network_client_demo
-    examples/NetworkClient.c
+    examples/net/NetworkClient.c
 )
 target_compile_definitions(network_client_demo PRIVATE
     _POSIX_C_SOURCE=200809L
@@ -401,5 +413,25 @@ if(BUILD_TESTING)
     # UDP 客户端内部等待约 2 秒；CTest 最多给它 5 秒，防止异常时永久卡住。
     set_tests_properties(net_udp_timeout PROPERTIES
         TIMEOUT 5
+    )
+
+    add_executable(frame_protocol_test
+        tests/frame_protocol_test.c
+    )
+
+    # Release 默认定义 NDEBUG；该测试使用 assert()，必须保持断言生效，
+    # 否则测试主体会被编译器移除。
+    if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(frame_protocol_test PRIVATE -UNDEBUG)
+    endif()
+
+    target_link_libraries(frame_protocol_test PRIVATE
+        edgevision_protocol
+    )
+
+    edgevision_enable_warnings(frame_protocol_test)
+
+    add_test(NAME frame_protocol
+        COMMAND frame_protocol_test
     )
 endif()

@@ -1,18 +1,19 @@
 # edgevision-gateway
 
-Long-lived integration project for the embedded Linux learning plan.
+嵌入式 Linux 学习计划的长期集成项目。
 
-## Current baseline
+## 当前能力
 
-- W04 bounded-queue asynchronous logger
-- SIGINT/SIGTERM graceful shutdown
-- Reusable IPv4 TCP/UDP wrapper in `modules/net`
-- TCP/UDP examples and abnormal-path tests
-- `gateway --smoke` loopback request/response verification
-- 100-connection, 100 MiB TCP stress test with payload and FD validation
-- CMake build, CTest, ASan and UBSan verification
+- W04 有界队列异步日志器
+- 收到 SIGINT/SIGTERM 后优雅退出
+- `modules/net` 中可复用的 IPv4 TCP/UDP 封装
+- 有长度上限的 TCP 应用层帧、增量解析和 CRC16-Modbus
+- TCP/UDP 示例和异常路径测试
+- `gateway --smoke` 协议帧 Measurement 环回验证
+- 100 个连接、100 MiB 数据的压力测试，并校验数据内容和文件描述符
+- CMake 构建、CTest 测试、ASan 和 UBSan 内存安全检查
 
-## Build and verify
+## 构建和验证
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
@@ -20,16 +21,17 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-Run the Gateway smoke test:
+运行 Gateway 冒烟测试：
 
 ```bash
 ./build/gateway --smoke
 ```
 
-Run `./build/gateway`, then press `Ctrl+C` to verify a clean stop.
+运行 `./build/gateway` 后按 `Ctrl+C`，可以验证进程是否安全退出。
 
-## Documentation
+## 文档
 
-- [Compilation, CMake, CTest and Sanitizers](docs/build-cmake-ctest-sanitizers.md)
-- [D29 network entry validation](docs/d29-network-validation.md)
-- [D29 OK1126B-S board validation evidence](docs/d29-ok1126b-board-evidence.md)
+- [编译、CMake、CTest 与内存安全检查](docs/build-cmake-ctest-sanitizers.md)
+- [D29 网络入口验证](docs/d29-network-validation.md)
+- [D29 OK1126B-S 板端验证证据](docs/d29-ok1126b-board-evidence.md)
+- [D32 TCP 协议帧与 Modbus RTU 对照](docs/d32-tcp-framing-modbus-rtu.md)
