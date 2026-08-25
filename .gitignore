@@ -6,20 +6,43 @@
 # CTest output accidentally generated at the repository root
 /Testing/
 
+# CMake files accidentally generated in the repository root
+/CMakeCache.txt
+/CMakeFiles/
+/CTestTestfile.cmake
+/cmake_install.cmake
+/Makefile
+
 # CMake/Ninja user-local generated files
 /CMakeUserPresets.json
 /compile_commands.json
 /.ninja_deps
 /.ninja_log
 
+# User-local editor settings
+/.vscode/
+
 # Logs and crash dumps
 *.log
 *.log.*
 /core
+# core/ 是源码目录，不能被上面的根目录转储文件规则误伤。
+!/core/
 /core.*
 
 # Compiler intermediate files
 *.o
+*.a
+*.so
+*.so.*
+*.d
+*.out
+
+# Coverage and profiling output
+*.gcda
+*.gcno
+*.profraw
+*.profdata
 
 # Local network example binaries compiled directly in the source directory
 /examples/net/tcp_server
@@ -28,7 +51,22 @@
 /examples/net/tcp_sigpipe_client
 /examples/net/udp_server
 /examples/net/udp_client
+/examples/net/NetworkClient
+/examples/net/epoll_accept_test
+/examples/net/epoll_test
+/examples/net/tcp_frame
+
+# Local binaries compiled next to test and application sources
+/tests/async_logger_test
+/tests/net_module_test
+/tests/net_stress_test
+/tests/frame_protocol_test
+/apps/gateway/main
 
 # Local test binaries compiled directly in the repository root
+/gateway
+/network_client_demo
+/async_logger_test
+/frame_protocol_test
 /net_module_test
 /net_stress_test

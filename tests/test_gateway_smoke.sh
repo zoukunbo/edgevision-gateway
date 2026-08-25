@@ -10,7 +10,7 @@ trap 'rm -rf -- "$test_dir"' EXIT
 
 grep -q '^SMOKE_PASS$' "$test_dir/stdout.log"
 grep -q 'gateway started' "$test_dir/gateway.log"
-grep -q 'gateway smoke passed: framed Measurement loopback; ingress_frames=1 response_frames=1' "$test_dir/gateway.log"
+grep -q 'gateway smoke passed: framed Measurement loopback; measurements=100 ingress_frames=100 response_frames=100' "$test_dir/gateway.log"
 
 if grep -q 'SMOKE_FAIL' "$test_dir/stdout.log"; then
     echo "gateway reported smoke failure" >&2

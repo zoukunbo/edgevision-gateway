@@ -24,6 +24,8 @@ project(edgevision_gateway VERSION 0.1.0 LANGUAGES C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+# 为clangd编译数据库
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # option 的语法：
 #   option(<选项名> "给使用者看的说明" <默认值 ON/OFF>)
@@ -150,6 +152,53 @@ target_include_directories(edgevision_protocol PUBLIC
 )
 
 edgevision_enable_warnings(edgevision_protocol)
+# 第三方json库
+add_library(edgevision_cjson STATIC
+    third_party/cjson/cJSON.c
+)
+
+target_include_directories(edgevision_cjson SYSTEM PUBLIC
+    third_party/cjson
+)
+# cJSON及相关数字处理可能使用数学函数
+# 链接 edgevision_cjson 的目标也会自动继承数学库依赖
+target_link_libraries(edgevision_cjson PUBLIC
+    m
+)
+
+add_library(edgevision_domain STATIC
+    domain/measurement.c
+    domain/measurement_json.c
+)
+
+target_include_directories(edgevision_domain PUBLIC
+    domain
+)
+
+target_link_libraries(edgevision_domain PUBLIC
+    edgevision_cjson
+)
+
+edgevision_enable_warnings(edgevision_domain)
+
+# 核心编排层负责组织网络、协议、日志和退出流程。
+add_library(edgevision_core STATIC
+    core/gateway.c
+)
+target_include_directories(edgevision_core PUBLIC
+    core
+)
+target_compile_definitions(edgevision_core PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+target_link_libraries(edgevision_core PRIVATE
+    edgevision_log
+    edgevision_runtime
+    edgevision_net
+    edgevision_protocol
+    edgevision_domain
+)
+edgevision_enable_warnings(edgevision_core)
 
 # -----------------------------------------------------------------------------
 # 主程序目标
@@ -162,18 +211,10 @@ edgevision_enable_warnings(edgevision_protocol)
 add_executable(gateway
     apps/gateway/main.c
 )
-target_compile_definitions(gateway PRIVATE
-    _POSIX_C_SOURCE=200809L
-)
 
-# gateway 的源码会自动继承三个 PUBLIC 库暴露的头文件目录和传递依赖。
-# PRIVATE 表示：gateway 使用这些库，但 gateway 本身不是供其他目标链接的库，
-# 因而不需要继续向下传播依赖。
+# 入口程序只依赖核心编排层，具体模块依赖由核心层统一管理。
 target_link_libraries(gateway PRIVATE
-    edgevision_log
-    edgevision_runtime
-    edgevision_net
-    edgevision_protocol
+    edgevision_core
 )
 edgevision_enable_warnings(gateway)
 
@@ -433,5 +474,35 @@ if(BUILD_TESTING)
 
     add_test(NAME frame_protocol
         COMMAND frame_protocol_test
+    )
+
+    add_executable(measurement_test
+        tests/measurement_test.c
+    )
+
+    target_link_libraries(measurement_test PRIVATE
+        edgevision_domain
+    )
+
+    edgevision_enable_warnings(measurement_test)
+
+    add_test(NAME measurement
+        COMMAND measurement_test
+    )
+
+    # 修正：该目标只定义一次，并复用 edgevision_domain；不要再次直接编译
+    # measurement*.c 和 cJSON.c，否则会造成重复目标且绕过正式库的依赖配置。
+    add_executable(measurement_json_test
+        tests/measurement_json_test.c
+    )
+
+    target_link_libraries(measurement_json_test PRIVATE
+        edgevision_domain
+    )
+
+    edgevision_enable_warnings(measurement_json_test)
+
+    add_test(NAME measurement_json
+        COMMAND measurement_json_test
     )
 endif()

@@ -11,7 +11,7 @@ TCP 只提供稳定、有序的字节流，不提供应用消息边界。一次 
 | 字段 | 大小 | 含义 |
 | --- | ---: | --- |
 | MAGIC | 2 字节 | 固定值 `A5 5A`，用于寻找帧头和重新同步 |
-| LEN | 1 字节 | 业务数据长度，最大 64 字节 |
+| LEN | 1 字节 | 业务数据长度，当前最大 240 字节 |
 | PAYLOAD | LEN 字节 | 业务数据，例如模拟的 Measurement 测量消息 |
 | CRC16 | 2 字节 | 对 `LEN + PAYLOAD` 计算 CRC16-Modbus，低字节在前 |
 
@@ -39,7 +39,7 @@ D38 可以直接复用 CRC16 算法，但不能原样复用 Gateway 的 TCP 帧�
 
 LEN 字段由通信对端控制。如果程序没有先检查协议最大值和缓冲区剩余容量，
 攻击者就可能让程序等待异常大的数据、申请过多内存、读取未收到的数据，
-或者写出目标缓冲区。本实现先把业务数据限制在 64 字节以内，再计算完整
+或者写出目标缓冲区。本实现先把业务数据限制在 240 字节以内，再计算完整
 帧长；解析器使用固定的 2048 字节暂存区，并拒绝任何放不下的追加数据。
 
 ## 验证内容
@@ -47,8 +47,9 @@ LEN 字段由通信对端控制。如果程序没有先检查协议最大值和�
 - 单元测试覆盖半帧、粘包、噪声、非法长度、坏 CRC 后恢复、缓冲区溢出
   计数，以及标准 CRC 向量 `123456789 -> 0x4B37`。
 - 确定性测试生成并还原 1000 帧，伪随机分片长度为 1 到 97 字节。
-- `gateway --smoke` 使用协议帧发送模拟 Measurement 测量消息和确认消息；
-  7 字节接收缓冲区会稳定触发增量拆包路径。
+- `gateway --smoke` 在同一 TCP 连接连续发送并处理 100 条字段不同的模拟
+  Measurement，再校验 100 个确认消息；7 字节接收缓冲区会稳定触发增量
+  拆包和跨帧边界路径。
 
 ## OK1126B-S 板端验证
 
@@ -65,8 +66,10 @@ aarch64 架构，运行 Buildroot 和 Linux 6.1.141。板载 RTC 错误地显示
 ```text
 frame protocol module tests passed
 SMOKE_PASS
-gateway smoke passed: framed Measurement loopback; ingress_frames=1 response_frames=1
+gateway smoke passed: framed Measurement loopback; measurements=100 ingress_frames=100 response_frames=100
 ```
 
 三行输出依次表示：协议模块测试通过、Gateway 冒烟测试通过、Measurement
-请求帧和响应帧各成功解析 1 帧。至此板端 1000 帧协议测试和整链验证完成。
+请求帧和响应帧各成功解析 100 帧。该连续流结果于 2026-08-25 在同一块
+OK1126B-S 上复测通过；至此板端 1000 帧协议测试和 100 条 Measurement
+整链验证完成。

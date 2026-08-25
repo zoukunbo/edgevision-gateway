@@ -17,7 +17,7 @@
  * 函数。CRC16 使用 Modbus 算法，帧尾按低字节、高字节存放。
  */
 
-#define FRAME_MAX_PAYLOAD 64u       /* 单帧 payload 最大字节数。 */
+#define FRAME_MAX_PAYLOAD 240u      /* 单帧 payload 最大字节数，可容纳 Measurement JSON。 */
 #define FRAME_BUFFER_CAPACITY 2048u /* 单连接解析器的暂存容量。 */
 #define FRAME_MAX_SIZE \
     (2u + 1u + FRAME_MAX_PAYLOAD + 2u) /* 最大完整帧字节数。 */
