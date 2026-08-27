@@ -7,7 +7,8 @@
 typedef enum
 {
     GATEWAY_MODE_SERVICE = 0, /* 常驻运行，等待 SIGINT/SIGTERM。 */
-    GATEWAY_MODE_SMOKE = 1    /* 执行一次本地整链自检后退出。 */
+    GATEWAY_MODE_SMOKE = 1,    /* 执行一次本地整链自检后退出。 */
+    GATEWAY_MODE_MQTT_SMOKE = 2
 } gateway_mode_t;
 
 /** 启动 Gateway 所需的最小配置。 */
@@ -16,6 +17,8 @@ typedef struct
     gateway_mode_t mode;       /* 常驻模式或 smoke 模式。 */
     const char *log_path;       /* 日志文件路径，不能为空。 */
     size_t log_queue_capacity;  /* 异步日志队列容量，必须大于 0。 */
+    const char *mqtt_host;  /* 仅供MQTT模式下使用 */
+    int mqtt_port;
 } gateway_config_t;
 
 /**

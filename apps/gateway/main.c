@@ -6,6 +6,33 @@
 
 #define DEFAULT_LOG_QUEUE_CAPACITY 256u
 
+#ifdef EDGEVISION_ENABLE_MQTT
+
+static int parse_port(const char *text, int *output)
+{
+    char *end = NULL;
+    long value;
+
+    if (text == NULL || output == NULL)
+    {
+        return -1;
+    }
+
+    value = strtol(text, &end, 10);
+
+    if (end == text ||
+        *end != '\0' ||
+        value < 1 ||
+        value > 65535)
+    {
+        return -1;
+    }
+
+    *output = (int)value;
+    return 0;
+}
+
+#endif
 /**
  * @brief 解析网关程序的命令行参数。
  *
@@ -27,9 +54,12 @@ static int parse_arguments(int argc, char **argv, gateway_config_t *config)
         return -1;
     }
 
+    /* 默认配置 */
     config->mode = GATEWAY_MODE_SERVICE;
     config->log_path = "gateway.log";
     config->log_queue_capacity = DEFAULT_LOG_QUEUE_CAPACITY;
+    config->mqtt_host = "127.0.0.1";
+    config->mqtt_port = 1883;
 
     if (argc == 1) {
         return 0;
@@ -40,19 +70,48 @@ static int parse_arguments(int argc, char **argv, gateway_config_t *config)
         config->log_path = "gateway-smoke.log";
         return 0;
     }
+#ifdef EDGEVISION_ENABLE_MQTT
+    if (argc == 2 && strcmp(argv[1], "--mqtt-smoke") == 0)
+    {
+        config->mode = GATEWAY_MODE_MQTT_SMOKE;
+        config->log_path = "gateway-mqtt-smoke.log";
+        return 0;
+    }
+#endif
 
     if (argc == 2) {
         config->log_path = argv[1];
         return 0;
     }
-
     if (argc == 3 && strcmp(argv[1], "--smoke") == 0) {
         config->mode = GATEWAY_MODE_SMOKE;
         config->log_path = argv[2];
         return 0;
     }
 
-    fprintf(stderr, "usage: %s [--smoke] [log_path]\n", argv[0]);
+#ifdef EDGEVISION_ENABLE_MQTT
+    if (argc == 4 &&
+        strcmp(argv[1], "--mqtt-smoke") == 0)
+    {
+        if (argv[2][0] == '\0' ||
+            parse_port(argv[3], &config->mqtt_port) != 0)
+        {
+            fprintf(stderr, "invalid MQTT host or port\n");
+            return -1;
+        }
+
+        config->mode = GATEWAY_MODE_MQTT_SMOKE;
+        config->log_path = "gateway-mqtt-smoke.log";
+        config->mqtt_host = argv[2];
+        return 0;
+    }
+#endif
+
+    fprintf(
+        stderr,
+        "usage: %s [--smoke [log_path] | "
+        "--mqtt-smoke [host port] | log_path]\n",
+        argv[0]);
     return -1;
 }
 

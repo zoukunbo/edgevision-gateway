@@ -1,5 +1,11 @@
 #define _POSIX_C_SOURCE 200809L
 
+#ifdef EDGEVISION_ENABLE_MQTT
+#include "measurement_source.h"
+#include "mqtt_publisher.h"
+#include "simulated_source.h"
+#endif
+
 #include "gateway.h"
 
 #include "address.h"
@@ -19,6 +25,145 @@
 
 /* Smoke 模式在同一条 TCP 连接上连续发送和处理的模拟测量数量。 */
 #define GATEWAY_SMOKE_MEASUREMENT_COUNT 100u
+#define GATEWAY_MQTT_SMOKE_MEASUREMENT_COUNT 100u
+
+#ifdef EDGEVISION_ENABLE_MQTT
+
+static int gateway_publish_with_retry(
+    mqtt_publisher_t *publisher,
+    const measurement_t *measurement,
+    unsigned int max_attempts)
+{
+    unsigned int attempt;
+
+    if (publisher == NULL ||
+        measurement == NULL ||
+        max_attempts == 0u)
+    {
+        return -1;
+    }
+
+
+    for (attempt = 1u; attempt <= max_attempts; ++attempt)
+    {
+        mqtt_publisher_result_t result;
+
+        if (graceful_shutdown_requested())
+        {
+            return -1;
+        }
+        result = mqtt_publisher_wait_connected(publisher, 1);
+
+        if (graceful_shutdown_requested())
+        {
+            return -1;
+        }
+        if (result == MQTT_PUBLISHER_TIMEOUT ||
+            result == MQTT_PUBLISHER_NOT_CONNECTED)
+        {
+            fprintf(stderr,
+                    "MQTT unavailable; retry %u/%u\n",
+                    attempt,
+                    max_attempts);
+            continue;
+        }
+
+        if (result != MQTT_PUBLISHER_OK)
+        {
+            return -1;
+        }
+
+        result = mqtt_publisher_publish(
+            publisher,
+            measurement,
+            1);
+
+        if (result == MQTT_PUBLISHER_OK)
+        {
+            return 0;
+        }
+
+        if (result == MQTT_PUBLISHER_TIMEOUT ||
+            result == MQTT_PUBLISHER_NOT_CONNECTED)
+        {
+            fprintf(stderr,
+                    "MQTT publish interrupted; retry %u/%u\n",
+                    attempt,
+                    max_attempts);
+            continue;
+        }
+
+        /* 参数、序列化或底层库错误不进行盲目重试。 */
+        return -1;
+    }
+
+    return -1;
+}
+
+static int run_mqtt_smoke(const gateway_config_t *gateway_config)
+{
+    const mqtt_publisher_config_t publisher_config = {
+        .host = gateway_config->mqtt_host,
+        .port = gateway_config->mqtt_port,
+        .client_id = "edgevision-gateway-d35",
+        .topic_prefix = "edgevision/v1/devices",
+        .keepalive_seconds = 30,
+        .reconnect_delay_seconds = 1u,
+        .reconnect_delay_max_seconds = 8u
+    };
+
+    simulated_source_t simulated;
+    measurement_source_t source;
+    mqtt_publisher_t *publisher = NULL;
+    int result = -1;
+
+    simulated_source_init(&simulated);
+    source = simulated_source_as_measurement_source(&simulated);
+
+    publisher = mqtt_publisher_create(&publisher_config);
+    if (publisher == NULL)
+    {
+        fprintf(stderr, "failed to create MQTT publisher\n");
+        goto DONE;
+    }
+
+    if (mqtt_publisher_start(publisher) != MQTT_PUBLISHER_OK)
+    {
+        fprintf(stderr, "failed to start MQTT publisher\n");
+        goto DONE;
+    }
+    for (size_t i = 0; i < GATEWAY_MQTT_SMOKE_MEASUREMENT_COUNT; i++)
+    {
+        measurement_t pending_measurement;
+
+        if (measurement_source_next(
+                &source,
+                &pending_measurement) != MEASUREMENT_SOURCE_OK)
+        {
+            fprintf(stderr, "failed to obtain simulated Measurement\n");
+            goto DONE;
+        }
+
+        if (gateway_publish_with_retry(
+                publisher,
+                &pending_measurement,
+                3u) != 0)
+        {
+            fprintf(stderr, "failed to publish simulated Measurement\n");
+            goto DONE;
+        }
+    }
+    printf("published %u simulated Measurements\n",
+           GATEWAY_MQTT_SMOKE_MEASUREMENT_COUNT);
+
+    result = 0;
+
+DONE:
+    mqtt_publisher_destroy(publisher);
+    return result;
+}
+
+#endif
 
 /**
  * @brief 等待进程收到 SIGINT 或 SIGTERM 停止请求。
@@ -442,16 +587,36 @@ int gateway_run(const gateway_config_t *config)
 {
     async_logger_t logger;
     int result = -1;
+    int valid_mode;
+    valid_mode = config != NULL && (config->mode == GATEWAY_MODE_SERVICE || config->mode == GATEWAY_MODE_SMOKE);
+#ifdef EDGEVISION_ENABLE_MQTT
+    if (config != NULL &&
+        config->mode == GATEWAY_MODE_MQTT_SMOKE)
+    {
+        valid_mode = 1;
+    }
+#endif
 
     if (config == NULL ||
         config->log_path == NULL ||
         config->log_queue_capacity == 0 ||
-        (config->mode != GATEWAY_MODE_SERVICE &&
-         config->mode != GATEWAY_MODE_SMOKE))
+        !valid_mode)
     {
         errno = EINVAL;
         return -1;
     }
+
+#ifdef EDGEVISION_ENABLE_MQTT
+    if (config->mode == GATEWAY_MODE_MQTT_SMOKE &&
+        (config->mqtt_host == NULL ||
+         config->mqtt_host[0] == '\0' ||
+         config->mqtt_port < 1 ||
+         config->mqtt_port > 65535))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+#endif
 
     if (graceful_shutdown_install() != 0)
     {
@@ -478,6 +643,14 @@ int gateway_run(const gateway_config_t *config)
         result = run_network_smoke(&logger);
         goto SHUTDOWN;
     }
+
+#ifdef EDGEVISION_ENABLE_MQTT
+    if (config->mode == GATEWAY_MODE_MQTT_SMOKE)
+    {
+        result = run_mqtt_smoke(config);
+        goto SHUTDOWN;
+    }
+#endif
 
     printf("gateway running; send SIGINT or SIGTERM to stop\n");
     fflush(stdout);
@@ -507,9 +680,14 @@ SHUTDOWN:
         result = -1;
     }
 
-    if (config->mode == GATEWAY_MODE_SMOKE)
+    if (config->mode == GATEWAY_MODE_SMOKE ||
+        config->mode == GATEWAY_MODE_MQTT_SMOKE)
+    {
         printf("%s\n", result == 0 ? "SMOKE_PASS" : "SMOKE_FAIL");
+    }
     else if (result == 0)
+    {
         printf("gateway stopped cleanly\n");
+    }
     return result;
 }

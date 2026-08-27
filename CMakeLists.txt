@@ -33,7 +33,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # option 会创建一个布尔缓存变量。配置工程时可以覆盖它：
 #   cmake -S . -B build -DEDGEVISION_WARNINGS_AS_ERRORS=OFF
 option(EDGEVISION_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
-
+# 目标板 sysroot 不提供 libmosquitto，所以默认不构建 MQTT 适配层。
+# 主机开发时使用 -DEDGEVISION_ENABLE_MQTT=ON 显式开启。
+option(
+    EDGEVISION_ENABLE_MQTT
+    "Build the MQTT publisher module"
+    OFF
+)
+option(
+    EDGEVISION_BUILD_MQTT_EXAMPLE
+    "Build the host-only MQTT learning example"
+    OFF
+)
 # find_package 用来寻找外部依赖：
 #   find_package(<包名> REQUIRED)
 #
@@ -181,6 +192,96 @@ target_link_libraries(edgevision_domain PUBLIC
 
 edgevision_enable_warnings(edgevision_domain)
 
+add_library(edgevision_source STATIC
+    core/measurement_source.c
+    modules/source/simulated_source.c
+)
+
+target_include_directories(edgevision_source PUBLIC
+    core
+    modules/source
+)
+
+target_link_libraries(edgevision_source PUBLIC
+    edgevision_domain
+)
+
+edgevision_enable_warnings(edgevision_source)
+
+# 目标板 SDK 当前没有 libmosquitto，因此 MQTT 默认关闭。只有显式启用时
+# 才查找主机依赖并创建模块、示例和相关测试目标。
+if(EDGEVISION_ENABLE_MQTT)
+    # PkgConfig 从当前构建环境（主机或 sysroot）查询 libmosquitto 的
+    # 头文件目录、链接目录及传递依赖，并生成可复用的导入目标。
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(
+        MOSQUITTO
+        REQUIRED
+        IMPORTED_TARGET
+        libmosquitto
+    )
+
+    # 正式 MQTT 适配层编译为静态库，应用只需链接这个逻辑目标。
+    add_library(edgevision_mqtt STATIC
+        modules/mqtt/mqtt_publisher.c
+    )
+
+    # PUBLIC 使链接者能够直接 #include "mqtt_publisher.h"。
+    target_include_directories(edgevision_mqtt PUBLIC
+        modules/mqtt
+    )
+
+    # clock_gettime 等 POSIX 接口需要 2008 版特性宏；它只是实现细节。
+    target_compile_definitions(edgevision_mqtt PRIVATE
+        _POSIX_C_SOURCE=200809L
+    )
+
+    # PUBLIC 依赖会传递给最终可执行文件，确保静态库符号能被完整解析。
+    target_link_libraries(edgevision_mqtt PUBLIC
+        edgevision_domain
+        Threads::Threads
+        PkgConfig::MOSQUITTO
+    )
+
+    edgevision_enable_warnings(edgevision_mqtt)
+
+    # 示例只用于主机学习，不参与默认构建和目标板发布包。
+    if(EDGEVISION_BUILD_MQTT_EXAMPLE)
+        # 单次示例直接演示原始 libmosquitto API。
+        add_executable(mqtt_publish_once
+            examples/mqtt/mqtt_publish_once.c
+        )
+
+        # 重连示例演示对 edgevision_mqtt 封装层的实际调用。
+        add_executable(mqtt_reconnect_demo
+            examples/mqtt/mqtt_reconnect_demo.c
+        )
+
+        target_compile_definitions(mqtt_publish_once PRIVATE
+            _POSIX_C_SOURCE=200809L
+        )
+
+        target_link_libraries(mqtt_publish_once PRIVATE
+            edgevision_domain
+            Threads::Threads
+            PkgConfig::MOSQUITTO
+        )
+
+        # edgevision_mqtt 已公开传递 domain、Threads 和 Mosquitto 依赖。
+        target_link_libraries(mqtt_reconnect_demo PRIVATE
+            edgevision_mqtt
+        )
+
+        edgevision_enable_warnings(mqtt_publish_once)
+        edgevision_enable_warnings(mqtt_reconnect_demo)
+    endif()
+elseif(EDGEVISION_BUILD_MQTT_EXAMPLE)
+    # 防止用户只打开示例，却得到缺少 edgevision_mqtt 的模糊链接错误。
+    message(FATAL_ERROR
+        "EDGEVISION_BUILD_MQTT_EXAMPLE requires EDGEVISION_ENABLE_MQTT=ON"
+    )
+endif()
+
 # 核心编排层负责组织网络、协议、日志和退出流程。
 add_library(edgevision_core STATIC
     core/gateway.c
@@ -197,8 +298,21 @@ target_link_libraries(edgevision_core PRIVATE
     edgevision_net
     edgevision_protocol
     edgevision_domain
+    edgevision_source
 )
 edgevision_enable_warnings(edgevision_core)
+
+if(EDGEVISION_ENABLE_MQTT)
+    target_compile_definitions(edgevision_core PRIVATE
+        EDGEVISION_ENABLE_MQTT=1
+    )
+
+    target_link_libraries(edgevision_core PRIVATE
+        edgevision_mqtt
+    )
+endif()
+
+
 
 # -----------------------------------------------------------------------------
 # 主程序目标
@@ -211,6 +325,12 @@ edgevision_enable_warnings(edgevision_core)
 add_executable(gateway
     apps/gateway/main.c
 )
+
+if(EDGEVISION_ENABLE_MQTT)
+    target_compile_definitions(gateway PRIVATE
+        EDGEVISION_ENABLE_MQTT=1
+    )
+endif()
 
 # 入口程序只依赖核心编排层，具体模块依赖由核心层统一管理。
 target_link_libraries(gateway PRIVATE
@@ -505,4 +625,36 @@ if(BUILD_TESTING)
     add_test(NAME measurement_json
         COMMAND measurement_json_test
     )
+
+    add_executable(simulated_source_test
+        tests/simulated_source_test.c
+    )
+
+    target_link_libraries(simulated_source_test PRIVATE
+        edgevision_source
+    )
+
+    edgevision_enable_warnings(simulated_source_test)
+
+    add_test(NAME simulated_source
+        COMMAND simulated_source_test
+    )
+
+    if(EDGEVISION_ENABLE_MQTT)
+        # MQTT 生命周期测试不要求本机运行 Broker，只验证确定性的本地行为。
+        # 该条件保证目标板默认构建不会引用 libmosquitto 或 MQTT 测试源码。
+        add_executable(mqtt_publisher_test
+            tests/mqtt_publisher_test.c
+        )
+
+        target_link_libraries(mqtt_publisher_test PRIVATE
+            edgevision_mqtt
+        )
+
+        edgevision_enable_warnings(mqtt_publisher_test)
+
+        add_test(NAME mqtt_publisher
+            COMMAND mqtt_publisher_test
+        )
+    endif()
 endif()
