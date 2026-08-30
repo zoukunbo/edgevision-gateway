@@ -388,3 +388,92 @@ frame_result_t frame_encode(const unsigned char *payload,
 
     return FRAME_READY;
 }
+
+int modbus_rtu_build_read_holding(
+    uint8_t slave,
+    uint16_t start,
+    uint16_t quantity,
+    uint8_t *output,
+    size_t capacity)
+{
+    if (output == NULL ||
+        slave < 1 || slave > 247 ||
+        capacity < 8 ||
+        (uint32_t)start + quantity > 65536U ||
+        quantity < 1 || quantity > 125)
+    {
+        return -1;
+    }
+
+    output[0] = slave;
+    output[1] = 0x03;
+    /* Modbus 请求的寄存器地址和数量使用高字节在前。 */
+    output[2] = (uint8_t)(start >> 8);
+    output[3] = (uint8_t)start;
+
+    output[4] = (uint8_t)(quantity >> 8);
+    output[5] = (uint8_t)quantity;
+
+    /* Modbus RTU 在线路上传输 CRC 时使用低字节在前。 */
+    uint16_t crc = frame_crc16_modbus(output, 6);
+
+    output[6] = (uint8_t)crc;
+    output[7] = (uint8_t)(crc >> 8);
+
+    return 8;
+}
+
+modbus_response_result_t modbus_rtu_check_read_holding(
+    const uint8_t *frame,
+    size_t length,
+    uint8_t expected_slave,
+    uint16_t expected_quantity,
+    uint8_t *exception_code)
+{
+    if (exception_code == NULL) {
+        return MODBUS_RESPONSE_INVALID;
+    }
+    *exception_code = 0;
+
+    if (frame == NULL || length < 5 ||
+        expected_slave < 1 || expected_slave > 247 ||
+        expected_quantity < 1 || expected_quantity > 125) {
+        return MODBUS_RESPONSE_INVALID;
+    }
+
+    if (frame[0] != expected_slave) {
+        return MODBUS_RESPONSE_INVALID;
+    }
+
+    if (frame[1] == 0x03) {
+        /* 正常响应：字节数和总长度必须同时匹配请求。 */
+        if (frame[2] != expected_quantity * 2U ||
+            length != 5U + expected_quantity * 2U) {
+            return MODBUS_RESPONSE_INVALID;
+        }
+    } else if (frame[1] == 0x83) {
+        /* 异常响应固定5字节，frame[2]是异常码。 */
+        if (length != 5U) {
+            return MODBUS_RESPONSE_INVALID;
+        }
+    } else {
+        return MODBUS_RESPONSE_INVALID;
+    }
+
+    uint16_t calculated = frame_crc16_modbus(frame, length - 2);
+
+    uint16_t received =
+        (uint16_t)frame[length - 2] |
+        ((uint16_t)frame[length - 1] << 8);
+
+    if (calculated != received) {
+        return MODBUS_RESPONSE_INVALID;
+    }
+
+    if (frame[1] == 0x83) {
+        *exception_code = frame[2];
+        return MODBUS_RESPONSE_EXCEPTION;
+    }
+
+    return MODBUS_RESPONSE_NORMAL;
+}

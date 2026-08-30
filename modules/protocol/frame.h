@@ -125,4 +125,52 @@ uint16_t frame_crc16_modbus(
     const unsigned char *data,
     size_t size);
 
+/**
+ * @brief 构造 Modbus RTU 读取保持寄存器（功能码 0x03）请求帧。
+ *
+ * @param slave 从站地址，有效范围为 1..247。
+ * @param start 起始寄存器地址。
+ * @param quantity 要读取的寄存器数量，有效范围为 1..125，且地址范围不能
+ *        超过 0xFFFF。
+ * @param output 输出缓冲区，不能为空。
+ * @param capacity output 的可用字节数，至少为 8。
+ * @return 成功返回固定帧长 8；参数或地址范围无效时返回 -1。
+ *
+ * @note 多字节请求字段按 Modbus 规定使用大端序，末尾 CRC 使用低字节在前。
+ */
+int modbus_rtu_build_read_holding(
+    uint8_t slave,
+    uint16_t start,
+    uint16_t quantity,
+    uint8_t *output,
+    size_t capacity);
+
+/** 读取保持寄存器响应的校验结果。 */
+typedef enum {
+    MODBUS_RESPONSE_INVALID = -1,   /* 参数、站号、长度、功能码或 CRC 无效。 */
+    MODBUS_RESPONSE_NORMAL = 1,     /* 功能码 0x03 的正常响应通过校验。 */
+    MODBUS_RESPONSE_EXCEPTION = 2   /* 功能码 0x83 的异常响应通过校验。 */
+} modbus_response_result_t;
+
+/**
+ * @brief 校验一次读取保持寄存器请求所对应的完整 Modbus RTU 响应。
+ *
+ * @param frame 收到的完整候选响应，包含站号、功能码、数据和 CRC。
+ * @param length frame 的总字节数。
+ * @param expected_slave 本次请求使用的从站地址，有效范围为 1..247。
+ * @param expected_quantity 本次请求的寄存器数量，有效范围为 1..125。
+ * @param exception_code 异常码输出，不能为空；入口即清零，只有校验通过的
+ *        0x83 异常响应才写入 frame[2]。
+ * @return 正常响应返回 MODBUS_RESPONSE_NORMAL；有效异常响应返回
+ *         MODBUS_RESPONSE_EXCEPTION；其他情况返回 MODBUS_RESPONSE_INVALID。
+ *
+ * @note 本函数只校验响应边界和 CRC，不解析正常响应中的寄存器值。调用方仅
+ *       可在返回 MODBUS_RESPONSE_NORMAL 后按大端序读取 frame[3] 起的数据区。
+ */
+modbus_response_result_t modbus_rtu_check_read_holding(
+    const uint8_t *frame,
+    size_t length,
+    uint8_t expected_slave,
+    uint16_t expected_quantity,
+    uint8_t *exception_code);
 #endif

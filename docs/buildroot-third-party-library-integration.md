@@ -12,13 +12,14 @@
 - Buildroot 源码：`/home/zoukunbo/work/OK1126B-linux-source/buildroot`
 - Buildroot 版本：2024.02
 - Buildroot 自带 Mosquitto：2.0.18
-- 当前 SDK：`/home/zoukunbo/aarch64-buildroot-linux-gnu_sdk-buildroot`
-- CMake 工具链：`share/buildroot/toolchainfile.cmake`
+- 旧的独立 SDK：`/home/zoukunbo/aarch64-buildroot-linux-gnu_sdk-buildroot`（编译器可用，但不含 Mosquitto）
+- 当前可用 CMake 工具链：`buildroot/output/rockchip_ok1126b-s/host/share/buildroot/toolchainfile.cmake`
+- 当前可用 sysroot：`buildroot/output/rockchip_ok1126b-s/host/aarch64-buildroot-linux-gnu/sysroot`
 - 项目：`/home/zoukunbo/project/edgevision-gateway`
 
 OK1126B 的厂商配置名是 `rockchip_ok1126b-s`，对应AArch64配置片段
 `configs/rockchip/chips/rv1126b_aarch64.config`。正确输出目录是
-`output/rockchip_ok1126b-s`。
+`output/rockchip_ok1126b-s`。本机已安全删除错误的 i586 输出目录。
 
 曾经直接运行 `make menuconfig` 和 `make savedefconfig` 生成的
 `output/ok1126b` 是误用目录，其中配置已经退化为 `BR2_i386=y`，生成的
@@ -32,27 +33,35 @@ rg '^BR2_PACKAGE_MOSQUITTO' \
 rg '^BR2_PACKAGE_MOSQUITTO' \
     /home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s/.config
 
-/home/zoukunbo/aarch64-buildroot-linux-gnu_sdk-buildroot/bin/pkg-config \
+/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s/host/bin/pkg-config \
     --modversion libmosquitto
 ```
 
-第二条必须输出版本号，才能说明正在使用的 SDK 真正包含该开发库。
+最后一条必须输出版本号；本次结果为 `2.0.18`。旧的独立 SDK 不包含
+Mosquitto，不能用于 MQTT 构建。
 
 ## 2. 先理解四个不同位置
 
 | 位置 | 用途 | 应包含的内容 |
 | --- | --- | --- |
 | `output/build/` | 软件包源码和中间产物 | 临时文件，不供项目直接使用 |
-| `output/staging/` | 交叉编译 sysroot | 头文件、库、`.pc`、CMake package 文件 |
+| `output/.../host/<tuple>/sysroot/` | 本 BSP 的实际交叉编译 sysroot | 头文件、库、`.pc`、CMake package 文件 |
 | `output/target/` | 目标板根文件系统 | 运行时共享库和程序 |
 | 导出的 SDK | 可搬移工具链和 staging sysroot | 编译器、toolchainfile、头文件、库及发现元数据 |
 
 关键结论：
 
-- 项目交叉编译依赖 `staging` 或由它导出的 SDK；
+- 项目交叉编译依赖 Buildroot sysroot 或由它导出的 SDK；
 - 目标板运行依赖 `target` 中的共享库；
 - 只把 `.so` 复制到板端，不能解决交叉编译缺少头文件；
 - 只把库装进 SDK，也不能保证板端运行时能找到共享库。
+
+标准 Buildroot 常创建 `output/staging` 符号链接，但当前厂商 BSP 没有这个
+链接。不要据此判断构建失败，应使用实际目录：
+
+```text
+output/rockchip_ok1126b-s/host/aarch64-buildroot-linux-gnu/sysroot
+```
 
 ## 3. 将 libmosquitto 加入 Buildroot
 
@@ -101,20 +110,26 @@ BR2_PACKAGE_MOSQUITTO=y
 ```bash
 cd /home/zoukunbo/work/OK1126B-linux-source
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-./build.sh buildroot-make:mosquitto
+make -C buildroot \
+    O=/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s \
+    mosquitto
 ```
 
 若以前构建过 Mosquitto，但更改了 TLS、c-ares、cJSON 或静态/动态选项：
 
 ```bash
-./build.sh buildroot-make:mosquitto-dirclean
-./build.sh buildroot-make:mosquitto
+make -C buildroot \
+    O=/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s \
+    mosquitto-dirclean
+make -C buildroot \
+    O=/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s \
+    mosquitto
 ```
 
 验证交叉编译开发文件：
 
 ```bash
-find buildroot/output/rockchip_ok1126b-s/staging/usr \
+find buildroot/output/rockchip_ok1126b-s/host/aarch64-buildroot-linux-gnu/sysroot/usr \
     \( -name 'mosquitto.h' \
     -o -name 'libmosquitto.so*' \
     -o -name 'libmosquitto.a' \
@@ -132,10 +147,17 @@ file buildroot/output/rockchip_ok1126b-s/target/usr/lib/libmosquitto.so.1
 
 至少应看到头文件、目标架构库和 `libmosquitto.pc`。如果 staging 有库而 target 没有共享库，检查工具链静态/动态选项以及包安装过程。
 
-### 3.3 重建镜像并导出 SDK
+### 3.3 按需要选择镜像或 SDK
+
+单包构建成功后，当前电脑已经可以直接用 Buildroot 内置工具链交叉编译，
+不需要先导出 SDK。
+
+要让库永久进入开发板，应重新生成 rootfs/固件镜像并升级开发板。使用厂商
+与 rootfs/固件对应的入口，而不是把 `buildroot-sdk` 当成板端镜像构建。
+
+只有需要把可搬移工具链交给另一台电脑或 CI 时才导出 SDK：
 
 ```bash
-./build.sh buildroot
 ./build.sh buildroot-sdk
 find buildroot/output/rockchip_ok1126b-s/images \
     -maxdepth 1 -type f -name '*sdk*' -print
@@ -162,36 +184,44 @@ find <新SDK目录>/aarch64-buildroot-linux-gnu/sysroot/usr \
 
 禁止把宿主机 `/usr/lib/x86_64-linux-gnu/pkgconfig` 加入交叉构建搜索路径。这会让 CMake 找到 x86-64 库，产生架构错误或错误链接。
 
-## 4. 使用新 SDK 构建 edgevision-gateway
+## 4. 交叉编译 edgevision-gateway
 
-用新构建目录，避免旧 CMake 缓存继续引用旧 SDK：
+### 4.1 当前电脑直接使用 Buildroot 输出
+
+这是新增库后的首选最短路径。使用新构建目录，避免旧 CMake 缓存继续引用
+旧 SDK：
 
 ```bash
 cd /home/zoukunbo/project/edgevision-gateway
 
-cmake -S . -B build-arm64-mqtt \
-    -DCMAKE_TOOLCHAIN_FILE=<新SDK目录>/share/buildroot/toolchainfile.cmake \
+cmake -S . -B build-arm64-mqtt-buildroot \
+    -DCMAKE_TOOLCHAIN_FILE=/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s/host/share/buildroot/toolchainfile.cmake \
     -DCMAKE_BUILD_TYPE=Release \
     -DEDGEVISION_ENABLE_MQTT=ON \
     -DEDGEVISION_BUILD_MQTT_EXAMPLE=ON
 
-cmake --build build-arm64-mqtt -j
+cmake --build build-arm64-mqtt-buildroot -j2
 ```
 
 检查架构和动态依赖：
 
 ```bash
-file build-arm64-mqtt/mqtt_reconnect_demo
+file build-arm64-mqtt-buildroot/mqtt_reconnect_demo
 
-<新SDK目录>/bin/aarch64-buildroot-linux-gnu-readelf \
-    -d build-arm64-mqtt/mqtt_reconnect_demo
+/home/zoukunbo/work/OK1126B-linux-source/buildroot/output/rockchip_ok1126b-s/host/bin/aarch64-buildroot-linux-gnu-readelf \
+    -d build-arm64-mqtt-buildroot/mqtt_reconnect_demo
 ```
 
 预期：
 
 - `file` 显示 ARM aarch64，而不是 x86-64；
 - 动态依赖出现 `libmosquitto.so.1`；
-- `PkgConfig::MOSQUITTO` 来自新 SDK 的 sysroot。
+- `PkgConfig::MOSQUITTO` 来自正确 Buildroot 输出的 sysroot。
+
+### 4.2 使用独立 SDK
+
+只有跨机器使用时，才把上面的 toolchainfile 换成新导出并执行过
+`relocate-sdk.sh` 的 SDK 路径。每次切换工具链必须使用新的 CMake 构建目录。
 
 ## 5. 部署到目标板
 
@@ -234,7 +264,7 @@ mosquitto_sub -h <Broker-IP> -p 1883 \
 3. 查清许可证、架构支持、线程、TLS及其他依赖；
 4. 优先启用 Buildroot 已有包；
 5. 没有现成包时才创建自定义 package；
-6. 同时验证 staging、target 和导出 SDK；
+6. 同时验证实际 sysroot 和 target；仅在需要分发工具链时验证导出 SDK；
 7. 最后修改业务项目 CMake。
 
 ```bash
@@ -352,8 +382,8 @@ endif()
 find <SDK> -name '<库名>.pc' -o -name 'lib<库名>*'
 ```
 
-若 Buildroot `output/rockchip_ok1126b-s/staging` 能找到，而 SDK 找不到，
-说明忘记重新导出SDK，或CMake仍指向旧SDK。
+若 Buildroot 实际 sysroot 能找到，而旧 SDK 找不到，当前电脑可直接使用
+Buildroot toolchainfile；若必须跨机器使用，再重新导出 SDK。
 
 ### 链接器报告 `file in wrong format`
 
@@ -383,11 +413,11 @@ ldd /usr/bin/<程序>
 
 - [ ] Buildroot defconfig 已保存，而不只是修改 `.config`
 - [ ] 软件包版本和许可证明确
-- [ ] `output/staging` 有头文件、库和发现元数据
+- [ ] `host/aarch64-buildroot-linux-gnu/sysroot` 有头文件、库和发现元数据
 - [ ] `output/target` 有板端运行文件
-- [ ] 已重新执行 `make sdk`
-- [ ] 新目录解压并重定位 SDK
-- [ ] SDK的 pkg-config 能查到目标库
+- [ ] 若要永久部署，已重新生成并升级 rootfs/固件
+- [ ] 若要跨机器分发，才重新导出、解压并重定位 SDK
+- [ ] 当前 Buildroot 或新 SDK 的 pkg-config 能查到目标库
 - [ ] CMake使用 Buildroot toolchainfile
 - [ ] `file` 确认产物为 AArch64
 - [ ] `readelf`/`ldd` 确认依赖完整

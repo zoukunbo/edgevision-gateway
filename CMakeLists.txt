@@ -163,6 +163,23 @@ target_include_directories(edgevision_protocol PUBLIC
 )
 
 edgevision_enable_warnings(edgevision_protocol)
+# UART/RS485 基础适配层。当前只建立独立静态库，不接入 Gateway 主链；
+# 已验证最小收发；D37 再由真实数据源组合使用，不提前替换模拟主链。
+add_library(edgevision_serial STATIC
+    modules/serial/rse_control.c
+    modules/serial/rs485_serial.c
+)
+
+target_include_directories(edgevision_serial PUBLIC
+    modules/serial
+)
+
+target_compile_definitions(edgevision_serial PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+
+edgevision_enable_warnings(edgevision_serial)
+
 # 第三方json库
 add_library(edgevision_cjson STATIC
     third_party/cjson/cJSON.c
@@ -195,6 +212,7 @@ edgevision_enable_warnings(edgevision_domain)
 add_library(edgevision_source STATIC
     core/measurement_source.c
     modules/source/simulated_source.c
+    modules/source/real_serial_source.c
 )
 
 target_include_directories(edgevision_source PUBLIC
@@ -204,6 +222,7 @@ target_include_directories(edgevision_source PUBLIC
 
 target_link_libraries(edgevision_source PUBLIC
     edgevision_domain
+    edgevision_serial
 )
 
 edgevision_enable_warnings(edgevision_source)
@@ -387,6 +406,19 @@ target_link_libraries(network_client_demo PRIVATE
 )
 edgevision_enable_warnings(network_client_demo)
 
+# OK1126B-S UART5 + GPIO22 半双工 RS485 学习验证程序。
+add_executable(rs485_demo
+    examples/serial/rs485_demo.c
+)
+target_compile_definitions(rs485_demo PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+target_link_libraries(rs485_demo PRIVATE
+    edgevision_source
+    edgevision_runtime
+)
+edgevision_enable_warnings(rs485_demo)
+
 # -----------------------------------------------------------------------------
 # 自动测试（CTest）
 # -----------------------------------------------------------------------------
@@ -398,6 +430,38 @@ include(CTest)
 
 # if/endif 根据变量真假决定是否处理其中命令。
 if(BUILD_TESTING)
+    # D36 收尾：小型 PTY 回归和数据源占位契约，不模拟 RS485 电气时序。
+    add_executable(serial_baseline_test tests/serial_baseline_test.c)
+    target_link_libraries(serial_baseline_test PRIVATE edgevision_serial edgevision_source)
+    edgevision_enable_warnings(serial_baseline_test)
+    add_test(NAME serial_baseline COMMAND serial_baseline_test)
+    set_tests_properties(serial_baseline PROPERTIES TIMEOUT 5)
+
+    add_executable(serial_exact_timeout_test tests/serial_exact_timeout_test.c)
+    target_link_libraries(serial_exact_timeout_test PRIVATE edgevision_serial)
+    edgevision_enable_warnings(serial_exact_timeout_test)
+    add_test(NAME serial_exact_timeout COMMAND serial_exact_timeout_test)
+    set_tests_properties(serial_exact_timeout PROPERTIES TIMEOUT 5)
+
+    add_executable(serial_stop_test tests/serial_stop_test.c)
+    target_link_libraries(serial_stop_test PRIVATE edgevision_serial edgevision_runtime)
+    edgevision_enable_warnings(serial_stop_test)
+    add_test(NAME serial_stop COMMAND serial_stop_test)
+    set_tests_properties(serial_stop PROPERTIES TIMEOUT 8)
+
+    add_executable(real_serial_source_test tests/real_serial_source_test.c)
+    target_link_libraries(real_serial_source_test PRIVATE edgevision_source)
+    edgevision_enable_warnings(real_serial_source_test)
+    add_test(NAME real_serial_source COMMAND real_serial_source_test)
+    set_tests_properties(real_serial_source PROPERTIES TIMEOUT 5)
+
+    # 测试内提供GPIO替身；串口open/configure/close仍使用真实PTY和FD。
+    add_executable(rs485_port_test tests/rs485_port_test.c)
+    target_link_libraries(rs485_port_test PRIVATE edgevision_serial)
+    edgevision_enable_warnings(rs485_port_test)
+    add_test(NAME rs485_port_lifecycle COMMAND rs485_port_test)
+    set_tests_properties(rs485_port_lifecycle PROPERTIES TIMEOUT 5)
+
     # 测试程序首先也是普通可执行目标，然后才通过 add_test 注册给 CTest。
     add_executable(async_logger_test
         tests/async_logger_test.c

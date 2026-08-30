@@ -43,6 +43,96 @@ int main(void)
                (const unsigned char *)"123456789",
                9) == 0x4B37u);
 
+    /* Modbus RTU：读取1号从站，从地址0开始的2个保持寄存器。 */
+    {
+        uint8_t request[8] = {0};
+        const uint8_t expected[8] = {
+            0x01, 0x03, 0x00, 0x00,
+            0x00, 0x02, 0xC4, 0x0B
+        };
+
+        assert(modbus_rtu_build_read_holding(
+            1, 0, 2, request, sizeof(request)) == 8);
+
+        assert(memcmp(request, expected, sizeof(expected)) == 0);
+
+        /* 非法数量和容量不足。 */
+        assert(modbus_rtu_build_read_holding(
+            1, 0, 0, request, sizeof(request)) == -1);
+
+        assert(modbus_rtu_build_read_holding(
+            1, 0, 126, request, sizeof(request)) == -1);
+
+        assert(modbus_rtu_build_read_holding(
+            1, 0, 2, request, 7) == -1);
+
+        /* 地址边界：最后一个寄存器可读，但不能跨越地址空间。 */
+        assert(modbus_rtu_build_read_holding(
+            1, 0xFFFF, 1, request, sizeof(request)) == 8);
+
+        assert(modbus_rtu_build_read_holding(
+            1, 0xFFFF, 2, request, sizeof(request)) == -1);
+    }
+
+    /* Modbus正常响应、异常响应及错误帧。 */
+    {
+        uint8_t normal[] = {
+            0x01, 0x03, 0x04, 0x00, 0x19,
+            0x00, 0x32, 0xAA, 0x21
+        };
+        const uint8_t exception[] = {
+            0x01, 0x83, 0x02, 0xC0, 0xF1
+        };
+        uint8_t code = 0xFF;
+
+        /* 正常响应：清零异常码。 */
+        assert(modbus_rtu_check_read_holding(
+            normal, sizeof(normal), 1, 2, &code)
+            == MODBUS_RESPONSE_NORMAL);
+        assert(code == 0);
+
+        /* 有效异常响应不是坏帧。 */
+        assert(modbus_rtu_check_read_holding(
+            exception, sizeof(exception), 1, 2, &code)
+            == MODBUS_RESPONSE_EXCEPTION);
+        assert(code == 0x02);
+
+        /* 站号不匹配；不能保留上次的异常码。 */
+        assert(modbus_rtu_check_read_holding(
+            normal, sizeof(normal), 2, 2, &code)
+            == MODBUS_RESPONSE_INVALID);
+        assert(code == 0);
+
+        /* 已确认正常响应包含2个寄存器，才允许读取数据区。 */
+        uint16_t registers[2] = {0};
+
+        for (size_t i = 0; i < 2; ++i) {
+            size_t offset = 3U + i * 2U;
+
+            registers[i] =
+                ((uint16_t)normal[offset] << 8) |
+                (uint16_t)normal[offset + 1];
+        }
+
+        assert(registers[0] == 25);
+        assert(registers[1] == 50);
+
+        /* 数量不匹配、截断响应。 */
+        assert(modbus_rtu_check_read_holding(
+            normal, sizeof(normal), 1, 1, &code)
+            == MODBUS_RESPONSE_INVALID);
+
+        assert(modbus_rtu_check_read_holding(
+            normal, sizeof(normal) - 1, 1, 2, &code)
+            == MODBUS_RESPONSE_INVALID);
+
+        /* 修改数据但不更新CRC，必须拒绝。 */
+        normal[3] ^= 0x01;
+        assert(modbus_rtu_check_read_holding(
+            normal, sizeof(normal), 1, 2, &code)
+            == MODBUS_RESPONSE_INVALID);
+    }
+
     /* 编码ABC。 */
     assert(frame_encode(payload,
                         3,

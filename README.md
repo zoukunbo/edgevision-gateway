@@ -56,7 +56,9 @@ modules/log/            异步日志、轮转与压缩
 modules/net/            TCP/UDP、epoll 和可重连网络客户端
 modules/protocol/       自定义 TCP 帧、增量解析和 CRC16-Modbus
 modules/runtime/        SIGINT/SIGTERM 优雅退出
-modules/source/         Measurement 数据源实现
+modules/source/         模拟Measurement源、真实串口原始数据适配（Measurement仍占位）
+modules/serial/         UART5/RS485 和 GPIO 半双工基础封装
+hardware/rs485/         D36 接线、设备参数卡及原始字节证据
 modules/mqtt/           可选的 MQTT QoS 1 发布适配层
 third_party/cjson/      内置 cJSON 源码
 examples/               网络和 MQTT 独立学习示例
@@ -178,6 +180,10 @@ MAGIC(0xA5 0x5A) + LEN(1 byte) + PAYLOAD + CRC16(2 bytes)
 
 ## 文档索引
 
+- [D36 收尾核对与待验收边界](docs/d36-closeout.md)
+- [RS485 接线、参数与硬件验收证据](hardware/rs485/README.md)
+
+- [OK1126B-S UART5/RS485 与 NFS 开发指南](docs/rs485-uart5-nfs-development-guide.md)
 - [Gateway 核心代码阅读与整链验证指南](docs/gateway-code-reading-guide.md)
 - [Measurement V1 数据契约](docs/d33-measurement-contract.md)
 - [TCP 协议帧与 Modbus RTU 对照](docs/d32-tcp-framing-modbus-rtu.md)

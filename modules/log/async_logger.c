@@ -10,9 +10,12 @@
 #include <unistd.h>
 #include <zlib.h>
 
+/* 格式化后单行日志所使用的临时缓冲区大小。 */
 #define LOG_LINE_MAX 768
+/* gzip 压缩时每次读取、写入的数据块大小。 */
 #define COPY_BUFFER_SIZE 16384
 
+/* 将日志级别转换为写入文件的固定文本。 */
 static const char *level_to_string(log_level_t level)
 {
     switch (level)
@@ -30,6 +33,10 @@ static const char *level_to_string(log_level_t level)
     }
 }
 
+/*
+ * 记录后台写线程错误并唤醒所有等待持久化确认的生产线程。
+ * 关闭队列还会阻止后续提交，并让可能阻塞的队列操作及时退出。
+ */
 static void mark_writer_error(async_logger_t *logger)
 {
     pthread_mutex_lock(&logger->stats_mutex);
@@ -39,6 +46,7 @@ static void mark_writer_error(async_logger_t *logger)
     bq_close(&logger->queue);
 }
 
+/* 根据轮转序号和压缩选项生成“原路径.N[.gz]”形式的文件名。 */
 static int make_rotated_path(const async_logger_t *logger,
                              unsigned int index,
                              int compressed,
@@ -58,6 +66,10 @@ static int make_rotated_path(const async_logger_t *logger,
     return 0;
 }
 
+/*
+ * 将 source 流式压缩到 destination。
+ * 只有压缩文件完整写入并关闭后才删除源文件；失败时清理不完整的目标文件。
+ */
 static int gzip_file(const char *source, const char *destination)
 {
     unsigned char buffer[COPY_BUFFER_SIZE];
@@ -131,6 +143,7 @@ DONE:
     return result;
 }
 
+/* 将 stdio 缓冲区刷新到内核，并要求内核把文件数据同步到存储设备。 */
 static int sync_stream(FILE *file)
 {
     if (fflush(file) != 0)
@@ -144,6 +157,12 @@ static int sync_stream(FILE *file)
     return 0;
 }
 
+/*
+ * 执行一次日志轮转。
+ *
+ * 历史文件按 .1 -> .2 的方向移动，当前活动文件变为 .1；启用压缩时
+ * 历史文件使用 .N.gz 命名。最后重新打开一个空的活动日志文件。
+ */
 static int rotate_file(async_logger_t *logger)
 {
     char older[ASYNC_LOGGER_PATH_MAX];
@@ -158,7 +177,7 @@ static int rotate_file(async_logger_t *logger)
     }
     logger->file = NULL;
 
-    /* Shift oldest-first so a generation is never overwritten before moving. */
+    /* 从最大序号向后移动，避免较新的历史文件覆盖尚未搬移的旧文件。 */
     for (unsigned int index = logger->rotation_files; index > 1; --index)
     {
         if (make_rotated_path(logger,
@@ -221,6 +240,7 @@ static int rotate_file(async_logger_t *logger)
     return 0;
 }
 
+/* 将队列消息格式化为最终写入文件的一行日志。 */
 static int format_line(const log_message_t *message,
                        char *line,
                        size_t line_size)
@@ -258,6 +278,10 @@ static int format_line(const log_message_t *message,
     return length;
 }
 
+/*
+ * 写入单条消息，并在写入前按大小阈值执行轮转。
+ * FSYNC_EACH 模式还会在每条消息后立即刷新并同步文件。
+ */
 static int write_one(async_logger_t *logger, const log_message_t *message)
 {
     char line[LOG_LINE_MAX];
@@ -291,12 +315,13 @@ static int write_one(async_logger_t *logger, const log_message_t *message)
     return 0;
 }
 
+/* 后台写线程入口：持续消费队列，统一负责写文件、轮转和压缩。 */
 static void *writer_main(void *arg)
 {
     async_logger_t *logger = arg;
     log_message_t message;
 
-    /* The writer thread exclusively owns FILE access, rotation, and gzip. */
+    /* FILE、轮转和 gzip 只由本线程访问，避免额外的文件操作锁。 */
     for (;;)
     {
         bq_result_t rc = bq_pop(&logger->queue, &message, -1);
@@ -320,14 +345,14 @@ static void *writer_main(void *arg)
         logger->written++;
         if (logger->durability == ASYNC_LOGGER_FSYNC_EACH)
         {
-            /* Wake producers whose sequence is now known to be on storage. */
+            /* 当前序号已确认落盘，唤醒等待持久化结果的生产线程。 */
             logger->durable_sequence = message.sequence;
             pthread_cond_broadcast(&logger->durable_cond);
         }
         pthread_mutex_unlock(&logger->stats_mutex);
     }
 
-    /* A closed, empty queue means every previously accepted record was read. */
+    /* 队列关闭且已排空，说明此前接收的消息均已被消费，退出前统一同步。 */
     if (sync_stream(logger->file) != 0)
     {
         mark_writer_error(logger);
@@ -335,6 +360,10 @@ static void *writer_main(void *arg)
     return NULL;
 }
 
+/*
+ * 初始化过程中启动写线程之前发生失败时，按已成功创建的资源逆序清理。
+ * 各 ready 参数用于避免销毁尚未初始化的资源。
+ */
 static void cleanup_before_writer(async_logger_t *logger,
                                   int file_ready,
                                   int cond_ready,
@@ -365,6 +394,7 @@ static void cleanup_before_writer(async_logger_t *logger,
     }
 }
 
+/* 使用扩展配置创建队列、同步原语、日志文件和后台写线程。 */
 int async_logger_init_ex(async_logger_t *logger,
                          const async_logger_config_t *config)
 {
@@ -433,6 +463,7 @@ int async_logger_init_ex(async_logger_t *logger,
     }
     logger->current_bytes = (size_t)file_stat.st_size;
 
+    /* 所有依赖资源准备完成后再启动写线程，避免线程观察到半初始化状态。 */
     if (pthread_create(&logger->writer_thread,
                        NULL,
                        writer_main,
@@ -454,6 +485,7 @@ FAIL:
     return -1;
 }
 
+/* 使用无轮转、BUFFERED 持久化策略的简化初始化接口。 */
 int async_logger_init(async_logger_t *logger,
                       const char *path,
                       size_t capacity)
@@ -470,6 +502,7 @@ int async_logger_init(async_logger_t *logger,
     return async_logger_init_ex(logger, &config);
 }
 
+/* 构造消息并将其提交到有界队列；必要时等待写线程确认消息已落盘。 */
 int async_logger_log(async_logger_t *logger,
                      log_level_t level,
                      const char *text)
@@ -488,8 +521,8 @@ int async_logger_log(async_logger_t *logger,
     if (durable_mode)
     {
         /*
-         * Serialize durable submissions so sequence order, queue order, and
-         * the per-call durability acknowledgement describe the same record.
+         * 串行化持久模式的提交，使消息序号、入队顺序和每次调用等待的
+         * 持久化确认始终对应同一条记录。
          */
         pthread_mutex_lock(&logger->submit_mutex);
     }
@@ -533,7 +566,7 @@ int async_logger_log(async_logger_t *logger,
 
         pthread_mutex_unlock(&logger->submit_mutex);
         pthread_mutex_lock(&logger->stats_mutex);
-        /* Predicate loop handles spurious wakeups and writer failure. */
+        /* 使用条件谓词循环处理虚假唤醒，并在写线程失败时及时退出。 */
         while (logger->durable_sequence < message.sequence &&
                !logger->write_error)
         {
@@ -548,6 +581,7 @@ int async_logger_log(async_logger_t *logger,
     return 0;
 }
 
+/* 停止接收新消息，排空队列并等待后台写线程退出。 */
 int async_logger_shutdown(async_logger_t *logger)
 {
     int write_error;
@@ -556,7 +590,7 @@ int async_logger_shutdown(async_logger_t *logger)
     {
         return -1;
     }
-    /* Closing wakes waiters; writer drains queued records before it exits. */
+    /* 关闭操作会唤醒队列等待者；写线程会在退出前消费完已有消息。 */
     if (bq_close(&logger->queue) != BQ_OK)
     {
         return -1;
@@ -573,6 +607,7 @@ int async_logger_shutdown(async_logger_t *logger)
     return write_error ? -1 : 0;
 }
 
+/* 在 shutdown 完成后释放日志器持有的全部系统资源。 */
 int async_logger_destroy(async_logger_t *logger)
 {
     int result = 0;
