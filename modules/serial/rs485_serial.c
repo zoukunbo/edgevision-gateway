@@ -5,6 +5,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <linux/serial.h>
+#include <sys/ioctl.h>
 #include <poll.h>
 #include <termios.h>
 #include <time.h>
@@ -131,13 +133,62 @@ int serial_write_full(int serial_fd,
     return 0;
 }
 
+/*
+ * 等的是“本机最后一位已发送完”，不是“write已经返回”：
+ * TIOCOUTQ检查软件发送队列；TEMT还必须表示FIFO和移位寄存器均为空。
+ * 已核对OK1126B的8250驱动还排除DMA在途；不能外推到未核对的其他驱动。
+ *
+ * 2026-08-31实板对照：旧tcdrain路径在跟踪中等待约8.8ms，
+ * STM32可在请求结束约1.837ms后安排回复，因此晚释放TX可能覆盖回复。
+ * 改为状态轮询后，无需STM32的临时20ms延时即可读取成功；没有波形证据。
+ * 50us只是再次检查的间隔，不用固定睡眠时间推断“已发完”。
+ * nanosleep和GPIO ioctl均可能受调度影响，这不是硬实时方向控制。
+ */
+int serial_wait_tx_complete(int serial_fd, int timeout_ms)
+{
+    int64_t deadline, now;
+    if (serial_fd < 0) { errno = EBADF; return -1; }
+    if (serial_deadline_after_ms(timeout_ms, &deadline) < 0) return -1;
+
+    for (;;) {
+        struct timespec clock_now;
+        if (clock_gettime(CLOCK_MONOTONIC, &clock_now) < 0) return -1;
+        now = (int64_t)clock_now.tv_sec * INT64_C(1000000000) + clock_now.tv_nsec;
+        if (now >= deadline) { errno = ETIMEDOUT; return -1; }
+
+        /* 无其他写入者是调用前提。队列空不代表移位寄存器空，必须两项同时成立。 */
+        int queued = 0, status = 0;
+        if (ioctl(serial_fd, TIOCOUTQ, &queued) < 0 ||
+            ioctl(serial_fd, TIOCSERGETLSR, &status) < 0) {
+            if (errno == EINTR) continue;
+            return -1; /* 不支持时明确失败，不能把“未知”当成发送完成。 */
+        }
+        if (queued == 0 && (status & TIOCSER_TEMT) != 0) return 0;
+
+        struct timespec pause = { .tv_sec = 0, .tv_nsec = 50000 };
+        if (nanosleep(&pause, NULL) < 0 && errno != EINTR) return -1;
+        /* EINTR也回到同一个截止时间；普通Linux调度不提供硬实时保证。 */
+    }
+}
+
 int rs485_send_frame(int serial_fd,
                      rse_control_t *rse,
                      const uint8_t *frame,
                      size_t frame_length)
 {
     int saved_errno;
+    int tx_started = 0;
 
+    /*
+     * 发送前先验证接口能力并确认本机发送端为空；不支持的设备不会进入TX。
+     * 这里不检测其他主站是否占用A/B，总线仍必须保证只有一个请求发起者。
+     * 发送前100ms、write后100ms、上层接收1000ms是三个独立预算；
+     * write_full仍可能阻塞，不能把它们相加称为端到端总超时。
+     */
+    if (serial_wait_tx_complete(serial_fd, 100) < 0) {
+        saved_errno = errno;
+        goto restore_after_error;
+    }
 
     if (rse_control_set_tx(rse) < 0)
     {
@@ -145,19 +196,15 @@ int rs485_send_frame(int serial_fd,
         goto restore_after_error;
     }
 
+    tx_started = 1;
     if (serial_write_full(serial_fd, frame, frame_length) < 0)
     {
         saved_errno = errno;
         goto restore_after_error;
     }
 
-    int drain_result;
-    /* write() 只表示进入驱动队列；tcdrain() 确认最后一位已离开发送器。 */
-    do {
-        drain_result = tcdrain(serial_fd);
-    } while (drain_result < 0 && errno == EINTR);
-
-    if (drain_result < 0)
+    /* 不走tcdrain的节拍轮询；必须同时确认软件队列和硬件发送完成。 */
+    if (serial_wait_tx_complete(serial_fd, 100) < 0)
     {
         saved_errno = errno;
         goto restore_after_error;
@@ -171,6 +218,12 @@ int rs485_send_frame(int serial_fd,
     return 0;
 
 restore_after_error:
+    /*
+     * 失败帧不在此层重试；尽力清除本机尚未发送的队列并释放方向。
+     * 已在线路上发送的字节无法撤回，对端也可能见到残帧；
+     * 因而调用者不能把失败当作“完全没发送过”，更不能直接当作有效测量。
+     */
+    if (tx_started) (void)tcflush(serial_fd, TCOFLUSH);
     /* 保留首个失败原因，恢复 RX 失败不应覆盖真正的发送错误。 */
     (void)rse_control_set_rx(rse);
     errno = saved_errno;

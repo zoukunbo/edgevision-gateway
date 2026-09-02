@@ -4,6 +4,9 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/serial.h>
+#include <stdarg.h>
+#include <sys/ioctl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +18,23 @@
         goto fail; \
     } \
 } while (0)
+
+/* PTY没有硬件移位寄存器，仅替身TEMT；其余ioctl、字节读写仍走真实PTY。
+ * 硬件忙/队列未空/不支持接口由serial_tx_complete_test单独覆盖。
+ */
+int __real_ioctl(int fd, unsigned long request, ...);
+int __wrap_ioctl(int fd, unsigned long request, ...)
+{
+    va_list ap;
+    va_start(ap, request);
+    void *argument = va_arg(ap, void *);
+    va_end(ap);
+    if (request == TIOCSERGETLSR) {
+        *(int *)argument = TIOCSER_TEMT;
+        return 0;
+    }
+    return __real_ioctl(fd, request, argument);
+}
 
 /* 仅用于本测试：不访问实际GPIO，不能据此声称电气/时序验证通过。 */
 static int fail_gpio_open;
@@ -143,7 +163,7 @@ int main(void)
     CHECK(real_serial_source_read(&source, NULL, NULL) == REAL_SERIAL_SOURCE_COMPLETE);
     real_serial_source_close(&source);
     (void)close(master);
-    puts("real serial source: config/rollback/raw TX-RX/timeout/cancel/reopen/NO_DATA PASS (PTY + GPIO mock)");
+    puts("real serial source: config/rollback/raw TX-RX/timeout/cancel/reopen/NO_DATA PASS (PTY + GPIO/TEMT mock)");
     return EXIT_SUCCESS;
 fail:
     real_serial_source_close(&source);

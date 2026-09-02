@@ -30,6 +30,17 @@
 !/core/
 /core.*
 
+# SQLite runtime databases and their journal/WAL sidecars
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Locally assembled NFS export bundle (cross-built binaries and copied assets)
+/deploy/nfs-root/
+
 # Compiler intermediate files
 *.o
 *.a

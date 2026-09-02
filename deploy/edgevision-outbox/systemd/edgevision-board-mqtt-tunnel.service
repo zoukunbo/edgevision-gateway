@@ -1,0 +1,14 @@
+[Unit]
+Description=EdgeVision MQTT reverse tunnel to OK1126B
+Wants=network-online.target
+After=network-online.target mosquitto.service
+
+[Service]
+Type=simple
+User=zoukunbo
+ExecStart=/usr/bin/ssh -NT -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:1883:127.0.0.1:1883 root@192.168.0.232
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -389,14 +389,15 @@ frame_result_t frame_encode(const unsigned char *payload,
     return FRAME_READY;
 }
 
-int modbus_rtu_build_read_holding(
+int modbus_rtu_build_read_registers(
     uint8_t slave,
+    uint8_t function,
     uint16_t start,
     uint16_t quantity,
     uint8_t *output,
     size_t capacity)
 {
-    if (output == NULL ||
+    if ((function != 0x03 && function != 0x04) || output == NULL ||
         slave < 1 || slave > 247 ||
         capacity < 8 ||
         (uint32_t)start + quantity > 65536U ||
@@ -405,9 +406,12 @@ int modbus_rtu_build_read_holding(
         return -1;
     }
 
+    // 从机地址
     output[0] = slave;
-    output[1] = 0x03;
+    // 功能码
+    output[1] = function;
     /* Modbus 请求的寄存器地址和数量使用高字节在前。 */
+    // 寄存器起始地址
     output[2] = (uint8_t)(start >> 8);
     output[3] = (uint8_t)start;
 
@@ -423,10 +427,11 @@ int modbus_rtu_build_read_holding(
     return 8;
 }
 
-modbus_response_result_t modbus_rtu_check_read_holding(
+modbus_response_result_t modbus_rtu_check_read_registers(
     const uint8_t *frame,
     size_t length,
     uint8_t expected_slave,
+    uint8_t expected_function,
     uint16_t expected_quantity,
     uint8_t *exception_code)
 {
@@ -435,7 +440,8 @@ modbus_response_result_t modbus_rtu_check_read_holding(
     }
     *exception_code = 0;
 
-    if (frame == NULL || length < 5 ||
+    if ((expected_function != 0x03 && expected_function != 0x04) ||
+        frame == NULL || length < 5 ||
         expected_slave < 1 || expected_slave > 247 ||
         expected_quantity < 1 || expected_quantity > 125) {
         return MODBUS_RESPONSE_INVALID;
@@ -445,13 +451,13 @@ modbus_response_result_t modbus_rtu_check_read_holding(
         return MODBUS_RESPONSE_INVALID;
     }
 
-    if (frame[1] == 0x03) {
+    if (frame[1] == expected_function) {
         /* 正常响应：字节数和总长度必须同时匹配请求。 */
         if (frame[2] != expected_quantity * 2U ||
             length != 5U + expected_quantity * 2U) {
             return MODBUS_RESPONSE_INVALID;
         }
-    } else if (frame[1] == 0x83) {
+    } else if (frame[1] == (uint8_t)(expected_function | 0x80u)) {
         /* 异常响应固定5字节，frame[2]是异常码。 */
         if (length != 5U) {
             return MODBUS_RESPONSE_INVALID;
@@ -470,10 +476,27 @@ modbus_response_result_t modbus_rtu_check_read_holding(
         return MODBUS_RESPONSE_INVALID;
     }
 
-    if (frame[1] == 0x83) {
+    if (frame[1] == (uint8_t)(expected_function | 0x80u)) {
         *exception_code = frame[2];
         return MODBUS_RESPONSE_EXCEPTION;
     }
 
     return MODBUS_RESPONSE_NORMAL;
+}
+
+/* 保留原03接口及行为，已有调用者和测试不需要改写。 */
+int modbus_rtu_build_read_holding(
+    uint8_t slave, uint16_t start, uint16_t quantity,
+    uint8_t *output, size_t capacity)
+{
+    return modbus_rtu_build_read_registers(
+        slave, 0x03, start, quantity, output, capacity);
+}
+
+modbus_response_result_t modbus_rtu_check_read_holding(
+    const uint8_t *frame, size_t length, uint8_t expected_slave,
+    uint16_t expected_quantity, uint8_t *exception_code)
+{
+    return modbus_rtu_check_read_registers(
+        frame, length, expected_slave, 0x03, expected_quantity, exception_code);
 }

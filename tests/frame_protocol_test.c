@@ -133,6 +133,44 @@ int main(void)
             == MODBUS_RESPONSE_INVALID);
     }
 
+
+    /* 用户STM32截图的04黄金样本；保留上述03回归。 */
+    {
+        uint8_t request[8] = {0};
+        const uint8_t expected[] = {1, 4, 0, 1, 0, 2, 0x20, 0x0B};
+        uint8_t response[] = {1, 4, 4, 1, 9, 1, 0x4A, 0xAA, 0x1D};
+        uint8_t exception[] = {1, 0x84, 2, 0, 0};
+        uint8_t code = 0xFF;
+        assert(modbus_rtu_build_read_registers(
+            1, 4, 1, 2, request, sizeof(request)) == 8);
+        assert(memcmp(request, expected, sizeof(expected)) == 0);
+        assert(modbus_rtu_check_read_registers(
+            response, sizeof(response), 1, 4, 2, &code) == MODBUS_RESPONSE_NORMAL);
+        assert(code == 0);
+        assert(modbus_rtu_check_read_holding(
+            response, sizeof(response), 1, 2, &code) == MODBUS_RESPONSE_INVALID);
+
+        uint16_t crc = frame_crc16_modbus(exception, 3);
+        exception[3] = (uint8_t)crc;
+        exception[4] = (uint8_t)(crc >> 8);
+        assert(modbus_rtu_check_read_registers(
+            exception, sizeof(exception), 1, 4, 2, &code) == MODBUS_RESPONSE_EXCEPTION);
+        assert(code == 2);
+        assert(modbus_rtu_check_read_registers(
+            exception, sizeof(exception), 1, 3, 2, &code) == MODBUS_RESPONSE_INVALID);
+        assert(code == 0);
+
+        /* 此入口不能被用于写配置；CRC坏帧不能交给映射层。 */
+        assert(modbus_rtu_build_read_registers(
+            1, 6, 1, 2, request, sizeof(request)) == -1);
+        assert(memcmp(request, expected, sizeof(expected)) == 0);
+        assert(modbus_rtu_check_read_registers(
+            response, sizeof(response), 1, 6, 2, &code) == MODBUS_RESPONSE_INVALID);
+        response[4] ^= 1;
+        assert(modbus_rtu_check_read_registers(
+            response, sizeof(response), 1, 4, 2, &code) == MODBUS_RESPONSE_INVALID);
+    }
+
     /* 编码ABC。 */
     assert(frame_encode(payload,
                         3,

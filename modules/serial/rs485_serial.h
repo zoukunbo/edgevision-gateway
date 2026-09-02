@@ -36,7 +36,7 @@ int rs485_port_open(rs485_port_t *port,
  * 调用前先停止所有收发；不能和其他线程的IO并发调用。
  * 尽力恢复RX，释放全部FD并重置为-1；保留调用前errno。
  * 接受NULL和已关闭对象；不可传入未初始化对象或全零对象。
- * 这是资源清理，不保证GPIO释放后的物理电平或替代发送前的tcdrain。
+ * 这是资源清理，不保证GPIO释放后的物理电平或替代发送完成检查。
  */
 void rs485_port_close(rs485_port_t *port);
 
@@ -55,10 +55,22 @@ int serial_write_full(int serial_fd,
                       const uint8_t *data,
                       size_t length);
 
+/*
+ * 等待TIOCOUTQ=0且TIOCSERGETLSR包含TIOCSER_TEMT，返回0或-1/errno。
+ * timeout_ms必须>0，超时为ETIMEDOUT；只适用于已核对TEMT语义的原生UART。
+ * 当前验证目标是OK1126B的8250驱动，不保证USB串口/PTY支持；不支持则失败。
+ * 调用方独占串口，无其他写入者；不提供硬实时或发送取消保证。
+ */
+int serial_wait_tx_complete(int serial_fd, int timeout_ms);
+
 /**
  * 完成一次半双工帧发送。
  *
- * 正确顺序：RSE=TX → write_full → tcdrain → RSE=RX。
+ * 正确顺序：发送前检查 → RSE=TX → write_full → 队列空且TEMT → RSE=RX。
+ * 发送前检查和write后的完成等待各自最多100ms预算，适用于当前短RTU帧。
+ * write_full本身仍可阻塞；这不是完整端到端超时。失败时尽力清除待发送队列。
+ * 本机TX为空不等于总线无人发送；调用方须独占串口并协调总线主站。
+ * 100ms是检查循环的超时预算，不保证线程被调度或GPIO切换的硬实时上限。
  * 所有错误路径都必须尽力恢复 RX；成功返回 0，失败返回 -1。
  */
 int rs485_send_frame(int serial_fd,

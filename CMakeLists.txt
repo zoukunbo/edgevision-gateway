@@ -419,6 +419,26 @@ target_link_libraries(rs485_demo PRIVATE
 )
 edgevision_enable_warnings(rs485_demo)
 
+# PC模拟从站的一次03查询练习；保留原始字节demo，TODO由学习者完成。
+add_executable(modbus_rtu_demo
+    examples/serial/modbus_rtu_demo.c
+)
+target_compile_definitions(modbus_rtu_demo PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+target_link_libraries(modbus_rtu_demo PRIVATE
+    edgevision_source
+    edgevision_runtime
+    edgevision_protocol
+)
+edgevision_enable_warnings(modbus_rtu_demo)
+
+# MQTT样本上报显式启用；原串口/JSON模式在MQTT关闭时仍可构建。
+if(EDGEVISION_ENABLE_MQTT)
+    target_compile_definitions(modbus_rtu_demo PRIVATE EDGEVISION_ENABLE_MQTT=1)
+    target_link_libraries(modbus_rtu_demo PRIVATE edgevision_mqtt)
+endif()
+
 # -----------------------------------------------------------------------------
 # 自动测试（CTest）
 # -----------------------------------------------------------------------------
@@ -437,6 +457,15 @@ if(BUILD_TESTING)
     add_test(NAME serial_baseline COMMAND serial_baseline_test)
     set_tests_properties(serial_baseline PROPERTIES TIMEOUT 5)
 
+    # 状态与GPIO替身验证不提前释放TX；不代表实板电气时序验证。
+    add_executable(serial_tx_complete_test tests/serial_tx_complete_test.c)
+    target_link_libraries(serial_tx_complete_test PRIVATE edgevision_serial)
+    target_link_options(serial_tx_complete_test PRIVATE
+        "-Wl,--wrap=ioctl" "-Wl,--wrap=write" "-Wl,--wrap=tcflush")
+    edgevision_enable_warnings(serial_tx_complete_test)
+    add_test(NAME serial_tx_complete COMMAND serial_tx_complete_test)
+    set_tests_properties(serial_tx_complete PROPERTIES TIMEOUT 5)
+
     add_executable(serial_exact_timeout_test tests/serial_exact_timeout_test.c)
     target_link_libraries(serial_exact_timeout_test PRIVATE edgevision_serial)
     edgevision_enable_warnings(serial_exact_timeout_test)
@@ -451,6 +480,7 @@ if(BUILD_TESTING)
 
     add_executable(real_serial_source_test tests/real_serial_source_test.c)
     target_link_libraries(real_serial_source_test PRIVATE edgevision_source)
+    target_link_options(real_serial_source_test PRIVATE "-Wl,--wrap=ioctl")
     edgevision_enable_warnings(real_serial_source_test)
     add_test(NAME real_serial_source COMMAND real_serial_source_test)
     set_tests_properties(real_serial_source PROPERTIES TIMEOUT 5)

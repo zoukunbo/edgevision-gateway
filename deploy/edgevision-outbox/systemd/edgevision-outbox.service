@@ -1,0 +1,17 @@
+[Unit]
+Description=EdgeVision pending Outbox delivery
+Requires=mnt-edgevision.mount
+After=mnt-edgevision.mount network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=6
+ConditionFileIsExecutable=/mnt/edgevision/edgevision-outbox/scripts/run-outbox-once.sh
+
+[Service]
+Type=oneshot
+ExecStart=/mnt/edgevision/edgevision-outbox/scripts/run-outbox-once.sh
+TimeoutStartSec=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

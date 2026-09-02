@@ -1,0 +1,1 @@
+{"device_id":"stm32-dht11-01","metric":"temperature","unit":"celsius","schema_version":1,"sequence":1,"timestamp_ms":1788179459579,"value":26.1,"quality":"uncertain"}

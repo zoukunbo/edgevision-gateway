@@ -1,0 +1,14 @@
+[Unit]
+Description=EdgeVision read-only NFS deployment bundle
+Wants=network-online.target
+After=network-online.target
+
+[Mount]
+What=192.168.0.100:/
+Where=/mnt/edgevision
+Type=nfs4
+Options=ro,vers=4,proto=tcp,_netdev
+TimeoutSec=20
+
+[Install]
+WantedBy=multi-user.target

@@ -145,11 +145,11 @@ int modbus_rtu_build_read_holding(
     uint8_t *output,
     size_t capacity);
 
-/** 读取保持寄存器响应的校验结果。 */
+/** 03/04读寄存器响应共用的校验结果；正常与设备异常都必须先通过CRC。 */
 typedef enum {
     MODBUS_RESPONSE_INVALID = -1,   /* 参数、站号、长度、功能码或 CRC 无效。 */
-    MODBUS_RESPONSE_NORMAL = 1,     /* 功能码 0x03 的正常响应通过校验。 */
-    MODBUS_RESPONSE_EXCEPTION = 2   /* 功能码 0x83 的异常响应通过校验。 */
+    MODBUS_RESPONSE_NORMAL = 1,     /* 与请求匹配的正常响应通过校验。 */
+    MODBUS_RESPONSE_EXCEPTION = 2   /* 与请求匹配的异常响应通过校验。 */
 } modbus_response_result_t;
 
 /**
@@ -173,4 +173,32 @@ modbus_response_result_t modbus_rtu_check_read_holding(
     uint8_t expected_slave,
     uint16_t expected_quantity,
     uint8_t *exception_code);
+
+/*
+ * 只读寄存器通用入口，仅接受function=0x03（保持）或0x04（输入）。
+ * 其余参数/8字节请求/失败不写输出的约束与build_read_holding相同。
+ * 不支持06/10等配置写入。
+ */
+int modbus_rtu_build_read_registers(
+    uint8_t slave,
+    uint8_t function,
+    uint16_t start,
+    uint16_t quantity,
+    uint8_t *output,
+    size_t capacity);
+
+/*
+ * 按本次请求的功能码校验：正常必须等于expected_function，
+ * 异常必须等于expected_function|0x80；不能将03/04响应互相接受。
+ * expected_function只允许03/04；exception_code先清零，整帧校验成功才填写。
+ * 数据长度、CRC及其余约束与check_read_holding相同。
+ */
+modbus_response_result_t modbus_rtu_check_read_registers(
+    const uint8_t *frame,
+    size_t length,
+    uint8_t expected_slave,
+    uint8_t expected_function,
+    uint16_t expected_quantity,
+    uint8_t *exception_code);
+
 #endif
