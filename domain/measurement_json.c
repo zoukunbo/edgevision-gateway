@@ -7,6 +7,25 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * cJSON学习提示
+ * ------------
+ * cJSON把一段JSON解析成由cJSON节点组成的树：对象、字符串、数字等都是节点。
+ * 本文件用到的内存所有权规则是理解这些接口的关键：
+ *
+ * 1. cJSON_ParseWithLength()返回根节点，调用者拥有整棵树，最终必须
+ *    cJSON_Delete(root)。删除根节点会递归释放它拥有的所有子节点和字符串。
+ * 2. cJSON_GetObjectItemCaseSensitive()只返回树内节点的“借用指针”，不能单独
+ *    cJSON_Delete()，也不能在根节点删除后继续访问其valuestring/valuedouble。
+ * 3. cJSON_CreateObject()创建的根对象同样由调用者负责；Add*ToObject()成功后，
+ *    新字段节点的所有权归根对象，所以清理根对象即可。
+ * 4. cJSON_PrintUnformatted()返回一块独立分配的JSON文本。删除树不会删除该文本，
+ *    文本必须另行用cJSON_free()释放，以兼容cJSON可能配置的自定义分配器。
+ *
+ * 本文件坚持“先完整校验临时值，最后提交输出”：失败路径只释放本函数拥有的
+ * cJSON内存，不修改调用者的measurement_t或输出指针。
+ */
+
 measurement_json_result_t measurement_from_json(
     const char *json,
     size_t json_size,
@@ -20,6 +39,10 @@ measurement_json_result_t measurement_from_json(
         return MEASUREMENT_JSON_INVALID_ARGUMENT;
     }
 
+    /*
+     * 按调用者给出的长度解析，不依赖strlen()寻找输入末尾。
+     * 成功时root由本函数拥有；失败返回NULL且没有可供本函数释放的树。
+     */
     cJSON *root = cJSON_ParseWithLength(json, json_size);
 
     if (root == NULL)
@@ -28,6 +51,7 @@ measurement_json_result_t measurement_from_json(
         return MEASUREMENT_JSON_PARSE_ERROR;
     }
 
+    /* IsObject只检查节点类型；Measurement协议要求最外层必须是JSON对象。 */
     if (!cJSON_IsObject(root))
     {
         fprintf(stderr, "measurement_from_json: JSON root must be an object\n");
@@ -38,6 +62,10 @@ measurement_json_result_t measurement_from_json(
     /*
      * 所有字段都先校验，最后才写入 output。
      * 因此任意字段失败时，调用者传入的 output 都保持不变。
+     */
+    /*
+     * GetObjectItemCaseSensitive按键名精确匹配大小写。
+     * 返回值是root内部的借用节点：只读取，不单独释放。
      */
     /* device_id 第1层：取得必填节点，并判断节点是否存在。 */
     const cJSON *device_id =
@@ -50,6 +78,10 @@ measurement_json_result_t measurement_from_json(
         return MEASUREMENT_JSON_MISSING_FIELD;
     }
 
+    /*
+     * IsString判断JSON类型，不会把数字、布尔值自动转换为文本。
+     * valuestring同样由root拥有，只能在cJSON_Delete(root)之前读取。
+     */
     /* device_id 第2层：节点必须是JSON字符串，并且字符串存储有效。 */
     if (!cJSON_IsString(device_id) || device_id->valuestring == NULL)
     {
@@ -146,12 +178,17 @@ measurement_json_result_t measurement_from_json(
         return MEASUREMENT_JSON_MISSING_FIELD;
     }
 
+    /*
+     * IsNumber只接受JSON数字节点；数值通过valuedouble读取。
+     * cJSON以double为主要数字表示，因此整数还需要范围和整数性校验。
+     */
     /* schema_version 第2层：节点必须是JSON数字。 */
     if (!cJSON_IsNumber(schema_version))
     {
         fprintf(
             stderr,
             "measurement_from_json: field 'schema_version' must be a number\n");
+        /* Delete根节点会递归释放所有字段；借用字段指针也随即失效。 */
         cJSON_Delete(root);
         return MEASUREMENT_JSON_WRONG_TYPE;
     }
@@ -365,6 +402,7 @@ measurement_json_result_t measurement_from_json(
     /* 唯一允许修改正式输出的位置。 */
     *output = temporary;
 
+    /* 复制工作已经完成，释放解析树；output中的字符数组不依赖该树。 */
     cJSON_Delete(root);
     return MEASUREMENT_JSON_OK;
 }
@@ -391,7 +429,10 @@ measurement_json_result_t measurement_to_json(
         return MEASUREMENT_JSON_INVALID_MEASUREMENT;
     }
 
-    /* 3. 创建JSON根对象，后续任意字段添加失败都必须释放它。 */
+    /*
+     * 3. 创建空JSON对象。CreateObject只创建根节点，不会自动添加字段；
+     * 后续任意字段添加失败都必须Delete它，统一释放此前已添加的子节点。
+     */
     cJSON *root = cJSON_CreateObject();
 
     if (root == NULL)
@@ -402,6 +443,10 @@ measurement_json_result_t measurement_to_json(
 
     /*
      * 4. 添加八个必填字段。
+     * AddStringToObject是“创建字符串节点 + 挂到对象”两个动作的便捷接口；
+     * cJSON会复制传入文本，成功后字段由root拥有，返回值是新字段节点。
+     * 返回NULL通常表示分配或挂接失败，此时仍只需Delete(root)。
+     *
      * uint32_t最大值可以被double精确表示，因此schema_version和sequence
      * 可以直接使用cJSON_AddNumberToObject()。
      */
@@ -426,6 +471,7 @@ measurement_json_result_t measurement_to_json(
         return MEASUREMENT_JSON_ALLOCATION_ERROR;
     }
 
+    /* AddNumberToObject接收double；这里的uint32_t转换不会损失整数精度。 */
     if (cJSON_AddNumberToObject(
             root,
             "schema_version",
@@ -450,6 +496,8 @@ measurement_json_result_t measurement_to_json(
      * cJSON通常用double保存数字，但double不能精确表示所有int64_t。
      * 先把timestamp_ms格式化成十进制文本，再作为JSON原始数字添加，
      * 可以保证序列化结果中的毫秒时间戳没有精度损失。
+     * AddRawToObject会复制timestamp_text，并在打印时原样输出、不加字符串引号；
+     * 因此只能传入已经确认是合法JSON值的文本，不能直接放入外部未校验输入。
      */
     char timestamp_text[32];
     int timestamp_length = snprintf(
@@ -510,10 +558,13 @@ measurement_json_result_t measurement_to_json(
         return MEASUREMENT_JSON_ALLOCATION_ERROR;
     }
 
-    /* 6. 生成紧凑JSON字符串；返回的内存由调用者负责释放。 */
+    /*
+     * 6. PrintUnformatted遍历整棵树并生成无缩进、无多余换行的紧凑JSON。
+     * 返回文本是独立分配的缓冲区，不属于root，由调用者负责释放。
+     */
     char *json = cJSON_PrintUnformatted(root);
 
-    /* 7. JSON文本生成后，树结构已经不再需要。 */
+    /* 7. 文本与树互相独立；JSON文本生成后可以立即递归删除树。 */
     cJSON_Delete(root);
 
     if (json == NULL)
@@ -533,6 +584,9 @@ measurement_json_result_t measurement_to_json(
 
 void measurement_json_free(char *json)
 {
-    /* 与cJSON_PrintUnformatted()使用同一套释放函数。传入NULL也是安全的。 */
+    /*
+     * 不直接调用free()：cJSON允许通过cJSON_InitHooks()替换内存分配器，
+     * cJSON_free()能保证与PrintUnformatted使用同一套释放函数。NULL也是安全的。
+     */
     cJSON_free(json);
 }

@@ -1,9 +1,23 @@
 #define _POSIX_C_SOURCE 200809L
 
-#ifdef EDGEVISION_ENABLE_MQTT
+#if defined(EDGEVISION_ENABLE_MQTT) || defined(EDGEVISION_ENABLE_STORAGE)
 #include "measurement_source.h"
-#include "mqtt_publisher.h"
 #include "simulated_source.h"
+#endif
+#ifdef EDGEVISION_ENABLE_STORAGE
+#include "stm32_modbus_source.h"
+#endif
+
+#ifdef EDGEVISION_ENABLE_MQTT
+#include "mqtt_publisher.h"
+#endif
+
+#if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
+#include "gateway_workers.h"
+#endif
+
+#ifdef EDGEVISION_ENABLE_STORAGE
+#include "outbox_store.h"
 #endif
 
 #include "gateway.h"
@@ -22,6 +36,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 /* Smoke 模式在同一条 TCP 连接上连续发送和处理的模拟测量数量。 */
 #define GATEWAY_SMOKE_MEASUREMENT_COUNT 100u
@@ -174,6 +189,7 @@ DONE:
  * @return 0 表示收到停止请求；-1 表示 nanosleep() 发生非 EINTR 错误，
  *         errno 保留具体原因。
  */
+#ifndef EDGEVISION_ENABLE_STORAGE
 static int wait_for_stop(void)
 {
     const struct timespec interval = {.tv_sec = 0, .tv_nsec = 100000000L};
@@ -195,7 +211,7 @@ static int wait_for_stop(void)
     }
     return 0;
 }
-
+#endif
 /** 一条 TCP 连接及其独占的增量帧解析状态。 */
 typedef struct
 {
@@ -577,6 +593,107 @@ DONE:
     return result;
 }
 
+#ifdef EDGEVISION_ENABLE_STORAGE
+static int gateway_source_should_stop(void *context)
+{
+    (void)context;
+    return graceful_shutdown_requested();
+}
+#endif
+
+#if defined(EDGEVISION_ENABLE_STORAGE) && !defined(EDGEVISION_ENABLE_MQTT)
+static int gateway_store_next_measurement(
+    outbox_store_t *store,
+    measurement_source_t *source)
+{
+    measurement_t measurement = {0};
+    measurement_source_result_t source_result =
+        measurement_source_next(source, &measurement);
+
+    if (source_result == MEASUREMENT_SOURCE_NO_DATA)
+    {
+        return 0;
+    }
+
+    if (source_result != MEASUREMENT_SOURCE_OK)
+    {
+        fprintf(stderr, "failed to obtain Measurement\n");
+        return -1;
+    }
+
+    char topic[256];
+    int topic_length = snprintf(
+        topic,
+        sizeof(topic),
+        "edgevision/v1/devices/%s/measurements",
+        measurement.device_id);
+
+    if (topic_length < 0 || (size_t)topic_length >= sizeof(topic))
+    {
+        fprintf(stderr, "failed to build storage topic\n");
+        return -1;
+    }
+
+    /* TODO：声明 storage_result，调用保存接口。 */
+    outbox_store_result_t storage_result = outbox_store_save_measurement(store, &measurement, topic);
+
+    if (storage_result != OUTBOX_STORE_OK)
+    {
+        fprintf(stderr, "outbox_store_save_measurement failed: %d\n",
+                (int)storage_result);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int run_storage_service(
+    outbox_store_t *store,
+    measurement_source_t *source)
+{
+    const struct timespec interval = {
+        .tv_sec = 0,
+        .tv_nsec = 100000000L
+    };
+
+    while (!graceful_shutdown_requested())
+    {
+        int rc = gateway_store_next_measurement(store, source);
+        if (rc < 0)
+        {
+            return -1;
+        }
+
+        /* 分成十次等待，每次 100 ms，期间检查退出请求。 */
+        for (int tick = 0; tick < 10; ++tick)
+        {
+            if (graceful_shutdown_requested())
+            {
+                return 0;
+            }
+
+            struct timespec remaining = interval;
+            while (nanosleep(&remaining, &remaining) != 0)
+            {
+                if (errno == EINTR)
+                {
+                    if (graceful_shutdown_requested())
+                    {
+                        return 0;
+                    }
+                    continue;
+                }
+
+                fprintf(stderr, "storage service sleep failed: %s\n",
+                        strerror(errno));
+                return -1;
+            }
+        }
+    }
+
+    return 0;
+}
+#endif
 /**
  * @brief 按配置执行 Gateway 的完整生命周期。
  *
@@ -617,6 +734,33 @@ int gateway_run(const gateway_config_t *config)
         return -1;
     }
 #endif
+#ifdef EDGEVISION_ENABLE_STORAGE
+    if ((config->source_kind != GATEWAY_SOURCE_SIMULATED &&
+         config->source_kind != GATEWAY_SOURCE_STM32_MODBUS) ||
+        (config->source_kind == GATEWAY_SOURCE_STM32_MODBUS &&
+         (config->serial_path == NULL || config->serial_path[0] == '\0' ||
+          config->gpiochip_path == NULL || config->gpiochip_path[0] == '\0' ||
+          config->serial_timeout_ms <= 0)))
+    {
+        errno = EINVAL;
+        return -1;
+    }
+#endif
+
+#ifdef EDGEVISION_ENABLE_STORAGE
+    outbox_store_t *store = NULL;
+    simulated_source_t simulated;
+    stm32_modbus_source_t stm32 = STM32_MODBUS_SOURCE_INITIALIZER;
+    measurement_source_t source = {0};
+    int stm32_opened = 0;
+#endif
+
+    /*run_mqtt_smoke() 已经有自己的 Publisher，但那个变量只属于 smoke 函数，
+    服务模式无法使用，所以需要在 gateway_run() 中单独创建一个。
+    同时启用本地存储和 MQTT 时，才启用这条 Outbox 投递链路。*/
+#if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
+    mqtt_publisher_t *publisher = NULL;
+#endif
 
     if (graceful_shutdown_install() != 0)
     {
@@ -652,13 +796,121 @@ int gateway_run(const gateway_config_t *config)
     }
 #endif
 
+#ifdef EDGEVISION_ENABLE_STORAGE
+    const outbox_store_config_t storage_config = {
+        .db_path = config->storage_db_path,
+        .busy_timeout_ms = config->storage_busy_timeout_ms
+    };
+
+    outbox_store_result_t storage_result =
+        outbox_store_open(&storage_config, &store);
+
+    if (storage_result != OUTBOX_STORE_OK)
+    {
+        fprintf(stderr, "outbox_store_open failed: %d \n", (int)storage_result);
+        goto SHUTDOWN;
+    }
+
+    outbox_store_stats_t stats = {0};
+
+    storage_result = outbox_store_get_stats(store, &stats);
+
+    if (storage_result != OUTBOX_STORE_OK)
+    {
+        fprintf(stderr, "outbox_store_get_stats failed: %d\n",
+                (int)storage_result);
+        goto SHUTDOWN;
+    }
+
+    /*采集开始之前查询，所以打印的是数据库已有状态*/
+    printf(
+        "storage ready: measurements=%" PRIu64
+        ", pending=%" PRIu64
+        ", sent=%" PRIu64 "\n",
+        stats.measurement_total,
+        stats.pending_count,
+        stats.sent_count);
+
+    if (config->source_kind == GATEWAY_SOURCE_STM32_MODBUS)
+    {
+        const stm32_modbus_source_config_t source_config = {
+            .serial_path = config->serial_path,
+            .gpiochip_path = config->gpiochip_path,
+            .line_offset = config->gpio_line_offset,
+            .timeout_ms = config->serial_timeout_ms,
+            .should_stop = gateway_source_should_stop,
+            .stop_context = NULL
+        };
+        if (stm32_modbus_source_open(&stm32, &source_config) != 0)
+        {
+            perror("stm32_modbus_source_open");
+            goto SHUTDOWN;
+        }
+        stm32_opened = 1;
+        source = stm32_modbus_source_as_measurement_source(&stm32);
+    }
+    else
+    {
+        simulated_source_init(&simulated);
+        source = simulated_source_as_measurement_source(&simulated);
+    }
+
+#endif
+
+
+#if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
+    const mqtt_publisher_config_t publisher_config = {
+        .host = config->mqtt_host,
+        .port = config->mqtt_port,
+        .client_id = "edgevision-gateway-service",
+        .topic_prefix = "edgevision/v1/devices",
+        .keepalive_seconds = 30,
+        .reconnect_delay_seconds = 1u,
+        .reconnect_delay_max_seconds = 8u
+    };
+
+    /*分配对象，保存配置，准备内部资源*/
+    publisher = mqtt_publisher_create(&publisher_config);
+    if (publisher == NULL)
+    {
+        fprintf(stderr, "failed to create service MQTT publisher\n");
+        goto SHUTDOWN;
+    }
+
+    /*启动后台网络线程和异步连接*/
+    mqtt_publisher_result_t start_result =
+        mqtt_publisher_start(publisher);
+
+    if (start_result != MQTT_PUBLISHER_OK)
+    {
+        fprintf(stderr, "failed to start service MQTT publisher: %d\n",
+                (int)start_result);
+        goto SHUTDOWN;
+    }
+#endif
+
     printf("gateway running; send SIGINT or SIGTERM to stop\n");
     fflush(stdout);
+#ifdef EDGEVISION_ENABLE_STORAGE
+    int service_result;
+
+#if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
+    service_result = gateway_workers_run(store, &source, publisher);
+#else
+    service_result = run_storage_service(store, &source);
+#endif
+
+    if (service_result != 0)
+    {
+        goto SHUTDOWN;
+    }
+#else
     if (wait_for_stop() != 0)
     {
         fprintf(stderr, "wait_for_stop failed: %s\n", strerror(errno));
         goto SHUTDOWN;
     }
+#endif
     if (async_logger_log(&logger,
                          LOG_LEVEL_INFO,
                          "shutdown requested; draining logger") != 0)
@@ -669,6 +921,35 @@ int gateway_run(const gateway_config_t *config)
     result = 0;
 
 SHUTDOWN:
+
+#if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
+    mqtt_publisher_destroy(publisher);
+    publisher = NULL;
+#endif
+
+#ifdef EDGEVISION_ENABLE_STORAGE
+    if (stm32_opened)
+    {
+        stm32_modbus_source_close(&stm32);
+        stm32_opened = 0;
+    }
+
+    if (store != NULL)
+    {
+        outbox_store_result_t close_result = outbox_store_close(store);
+        if (close_result != OUTBOX_STORE_OK)
+        {
+            fprintf(stderr, "outbox_store_close failed: %d\n",
+                    (int)close_result);
+            result = -1;
+        }
+        else
+        {
+            store = NULL;
+        }
+    }
+#endif
+
     if (async_logger_shutdown(&logger) != 0)
     {
         fprintf(stderr, "async_logger_shutdown failed\n");

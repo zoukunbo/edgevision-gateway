@@ -45,6 +45,12 @@ option(
     "Build the host-only MQTT learning example"
     OFF
 )
+
+option(
+    EDGEVISION_ENABLE_STORAGE
+    "Build the SQLite storage module"
+    OFF
+)
 # find_package 用来寻找外部依赖：
 #   find_package(<包名> REQUIRED)
 #
@@ -209,10 +215,45 @@ target_link_libraries(edgevision_domain PUBLIC
 
 edgevision_enable_warnings(edgevision_domain)
 
+if(EDGEVISION_ENABLE_STORAGE)
+    find_package(SQLite3 REQUIRED)
+
+    add_library(edgevision_storage STATIC
+        modules/storage/outbox_store.c
+    )
+
+    target_include_directories(edgevision_storage PUBLIC
+        modules/storage
+    )
+
+    target_link_libraries(edgevision_storage
+        PUBLIC edgevision_domain
+        PRIVATE SQLite::SQLite3
+    )
+
+    edgevision_enable_warnings(edgevision_storage)
+
+    # 消费端幂等学习示例：从 stdin 读取 JSON，以持久化 message_id 去重。
+    # 它只依赖领域 JSON 契约和 SQLite，不需要 MQTT Broker。
+    add_executable(sqlite_idempotent_consumer_demo
+        examples/storage/sqlite_idempotent_consumer_demo.c
+    )
+    target_compile_definitions(sqlite_idempotent_consumer_demo PRIVATE
+        _POSIX_C_SOURCE=200809L
+    )
+    target_link_libraries(sqlite_idempotent_consumer_demo PRIVATE
+        edgevision_domain
+        SQLite::SQLite3
+    )
+    edgevision_enable_warnings(sqlite_idempotent_consumer_demo)
+endif()
+
+
 add_library(edgevision_source STATIC
     core/measurement_source.c
     modules/source/simulated_source.c
     modules/source/real_serial_source.c
+    modules/source/stm32_modbus_source.c
 )
 
 target_include_directories(edgevision_source PUBLIC
@@ -223,6 +264,7 @@ target_include_directories(edgevision_source PUBLIC
 target_link_libraries(edgevision_source PUBLIC
     edgevision_domain
     edgevision_serial
+    edgevision_protocol
 )
 
 edgevision_enable_warnings(edgevision_source)
@@ -321,6 +363,12 @@ target_link_libraries(edgevision_core PRIVATE
 )
 edgevision_enable_warnings(edgevision_core)
 
+if(EDGEVISION_ENABLE_STORAGE AND EDGEVISION_ENABLE_MQTT)
+    target_sources(edgevision_core PRIVATE
+        core/gateway_workers.c
+    )
+endif()
+
 if(EDGEVISION_ENABLE_MQTT)
     target_compile_definitions(edgevision_core PRIVATE
         EDGEVISION_ENABLE_MQTT=1
@@ -331,6 +379,15 @@ if(EDGEVISION_ENABLE_MQTT)
     )
 endif()
 
+if(EDGEVISION_ENABLE_STORAGE)
+    target_compile_definitions(edgevision_core PRIVATE
+        EDGEVISION_ENABLE_STORAGE=1
+    )
+
+    target_link_libraries(edgevision_core PRIVATE
+        edgevision_storage
+    )
+endif()
 
 
 # -----------------------------------------------------------------------------
@@ -350,6 +407,17 @@ if(EDGEVISION_ENABLE_MQTT)
         EDGEVISION_ENABLE_MQTT=1
     )
 endif()
+
+if(EDGEVISION_ENABLE_STORAGE)
+    target_compile_definitions(gateway PRIVATE
+        EDGEVISION_ENABLE_STORAGE=1
+    )
+endif()
+
+# 版本来自 project()，保证二进制输出与构建配置使用同一个可信来源。
+target_compile_definitions(gateway PRIVATE
+    EDGEVISION_VERSION="${PROJECT_VERSION}"
+)
 
 # 入口程序只依赖核心编排层，具体模块依赖由核心层统一管理。
 target_link_libraries(gateway PRIVATE
@@ -484,6 +552,18 @@ if(BUILD_TESTING)
     edgevision_enable_warnings(real_serial_source_test)
     add_test(NAME real_serial_source COMMAND real_serial_source_test)
     set_tests_properties(real_serial_source PROPERTIES TIMEOUT 5)
+
+    # PTY 响应器验证正式 STM32 源的一次请求生成两条缓存 Measurement。
+    # GPIO 与 UART TEMT 在测试内替代，不把本测试表述为实板电气证据。
+    add_executable(stm32_modbus_source_test tests/stm32_modbus_source_test.c)
+    target_link_libraries(stm32_modbus_source_test PRIVATE
+        edgevision_source
+        Threads::Threads
+    )
+    target_link_options(stm32_modbus_source_test PRIVATE "-Wl,--wrap=ioctl")
+    edgevision_enable_warnings(stm32_modbus_source_test)
+    add_test(NAME stm32_modbus_source COMMAND stm32_modbus_source_test)
+    set_tests_properties(stm32_modbus_source PROPERTIES TIMEOUT 5)
 
     # 测试内提供GPIO替身；串口open/configure/close仍使用真实PTY和FD。
     add_executable(rs485_port_test tests/rs485_port_test.c)
@@ -750,5 +830,13 @@ if(BUILD_TESTING)
         add_test(NAME mqtt_publisher
             COMMAND mqtt_publisher_test
         )
+    endif()
+
+    if(EDGEVISION_ENABLE_STORAGE)
+        # 内存数据库连续消费同一 payload 两次，期望业务表只产生一条记录。
+        add_test(NAME sqlite_idempotent_consumer
+            COMMAND sqlite_idempotent_consumer_demo --self-test
+        )
+        set_tests_properties(sqlite_idempotent_consumer PROPERTIES TIMEOUT 5)
     endif()
 endif()

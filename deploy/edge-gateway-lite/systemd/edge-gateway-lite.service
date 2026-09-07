@@ -1,0 +1,29 @@
+[Unit]
+Description=Edge Gateway Lite v0.1
+Wants=network-online.target
+After=network-online.target
+ConditionFileIsExecutable=/userdata/edgevision-gateway/edge-gateway-lite/scripts/run-gateway.sh
+
+[Service]
+Type=simple
+# 当前 OK1126B-S 的 gpiochip0 仅 root 可访问；后续可用 udev/group 收紧权限。
+User=root
+EnvironmentFile=-/etc/edgevision-gateway/edge-gateway-lite.env
+ExecStart=/userdata/edgevision-gateway/edge-gateway-lite/scripts/run-gateway.sh
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=3
+
+# 进程不需要提权或修改内核参数；这些约束不阻止 UART/GPIO 字符设备访问。
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/userdata/edgevision-gateway
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,12 @@ typedef enum
     GATEWAY_MODE_MQTT_SMOKE = 2
 } gateway_mode_t;
 
+typedef enum
+{
+    GATEWAY_SOURCE_SIMULATED = 0,
+    GATEWAY_SOURCE_STM32_MODBUS = 1
+} gateway_source_kind_t;
+
 /** 启动 Gateway 所需的最小配置。 */
 typedef struct
 {
@@ -19,6 +25,13 @@ typedef struct
     size_t log_queue_capacity;  /* 异步日志队列容量，必须大于 0。 */
     const char *mqtt_host;  /* 仅供MQTT模式下使用 */
     int mqtt_port;
+    const char *storage_db_path;   /* 数据库路径；字符串由调用方持有。 */
+    int storage_busy_timeout_ms;  /* 数据库忙等待时间，单位毫秒。 */
+    gateway_source_kind_t source_kind;
+    const char *serial_path;
+    const char *gpiochip_path;
+    unsigned int gpio_line_offset;
+    int serial_timeout_ms;
 } gateway_config_t;
 
 /**

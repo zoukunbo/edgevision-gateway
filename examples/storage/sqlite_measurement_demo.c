@@ -28,9 +28,9 @@ static int insert_json(sqlite3 *db, const char *json)
     /* sqlite3_bind_xxx 把应用程序数据绑定到sql,语句中的占位符 （？或 NNN）上*/
     rc = sqlite3_bind_text(stmt, 1, json, -1, SQLITE_TRANSIENT);
     if (rc != SQLITE_OK) goto cleanup;
-    /**  sqlite3_step 执行准备好的语句
-    *对于INSERT/UPDATE/DELETET通常一步就完成返回SQLITE_DONE;
-    * 对于SELECT每次返回SQLITE_ROW
+    /**   sqlite3_step 执行准备好的语句
+     *    对于INSERT/UPDATE/DELETET通常一步就完成返回SQLITE_DONE;
+     *    对于SELECT每次返回SQLITE_ROW
     */
     rc = sqlite3_step(stmt);
     if (rc == SQLITE_DONE) {

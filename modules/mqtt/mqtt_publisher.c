@@ -367,45 +367,35 @@ mqtt_publisher_result_t mqtt_publisher_wait_connected(
     return outcome;
 }
 
-mqtt_publisher_result_t mqtt_publisher_publish(
+
+mqtt_publisher_result_t mqtt_publisher_publish_json(
     mqtt_publisher_t *publisher,
-    const measurement_t *measurement,
+    const char *topic,
+    const char *payload_json,
     int timeout_seconds)
 {
-    char topic[MQTT_TOPIC_CAPACITY];
-    char *json = NULL;
-    size_t json_size = 0;
     struct timespec deadline;
     mqtt_publisher_result_t outcome = MQTT_PUBLISHER_OK;
     int mid = -1;
     int result;
 
-    if (publisher == NULL || measurement == NULL || timeout_seconds <= 0)
-        return MQTT_PUBLISHER_INVALID_ARGUMENT;
-
-    /* 序列化函数同时验证 Measurement，并为 JSON 分配内存。 */
-    if (measurement_to_json(measurement, &json, &json_size) !=
-        MEASUREMENT_JSON_OK)
+    if (publisher == NULL ||
+        topic == NULL || topic[0] == '\0' ||
+        payload_json == NULL || payload_json[0] == '\0' ||
+        timeout_seconds <= 0)
     {
-        return MQTT_PUBLISHER_SERIALIZATION_ERROR;
-    }
-
-    /* 每台设备使用独立主题；snprintf 的返回值用于检测截断。 */
-    result = snprintf(topic,
-                      sizeof(topic),
-                      "%s/%s/measurements",
-                      publisher->topic_prefix,
-                      measurement->device_id);
-    if (result < 0 || (size_t)result >= sizeof(topic) || json_size > INT_MAX)
-    {
-        measurement_json_free(json);
         return MQTT_PUBLISHER_INVALID_ARGUMENT;
     }
 
-    /* 超时覆盖等待发布锁以及等待 PUBACK 的整个同步操作。 */
+    size_t json_size = strlen(payload_json);
+    if (json_size > INT_MAX)
+    {
+        return MQTT_PUBLISHER_INVALID_ARGUMENT;
+    }
+
+    /* 计算 PUBACK 等待截止时间” */
     if (clock_gettime(CLOCK_REALTIME, &deadline) != 0)
     {
-        measurement_json_free(json);
         return MQTT_PUBLISHER_LIBRARY_ERROR;
     }
 
@@ -431,7 +421,7 @@ mqtt_publisher_result_t mqtt_publisher_publish(
                                &mid,
                                topic,
                                (int)json_size,
-                               json,
+                               payload_json,
                                1,
                                false);
     if (result != MOSQ_ERR_SUCCESS)
@@ -473,7 +463,6 @@ FINISH:
     publisher->expected_mid = -1;
     pthread_mutex_unlock(&publisher->mutex);
     pthread_mutex_unlock(&publisher->publish_mutex);
-    measurement_json_free(json);
 
     return outcome;
 }
@@ -492,6 +481,48 @@ bool mqtt_publisher_is_connected(mqtt_publisher_t *publisher)
 
     return connected;
 }
+
+mqtt_publisher_result_t mqtt_publisher_publish(
+    mqtt_publisher_t *publisher,
+    const measurement_t *measurement,
+    int timeout_seconds)
+{
+    char topic[MQTT_TOPIC_CAPACITY];
+    char *json = NULL;
+    size_t json_size = 0;
+
+    mqtt_publisher_result_t outcome = MQTT_PUBLISHER_OK;
+    int result;
+
+    if (publisher == NULL || measurement == NULL || timeout_seconds <= 0)
+        return MQTT_PUBLISHER_INVALID_ARGUMENT;
+
+    /* 序列化函数同时验证 Measurement，并为 JSON 分配内存。 */
+    if (measurement_to_json(measurement, &json, &json_size) !=
+        MEASUREMENT_JSON_OK)
+    {
+        return MQTT_PUBLISHER_SERIALIZATION_ERROR;
+    }
+
+    /* 每台设备使用独立主题；snprintf 的返回值用于检测截断。 */
+    result = snprintf(topic,
+                      sizeof(topic),
+                      "%s/%s/measurements",
+                      publisher->topic_prefix,
+                      measurement->device_id);
+    if (result < 0 || (size_t)result >= sizeof(topic) || json_size > INT_MAX)
+    {
+        measurement_json_free(json);
+        return MQTT_PUBLISHER_INVALID_ARGUMENT;
+    }
+
+    outcome = mqtt_publisher_publish_json(publisher, topic, json, timeout_seconds);
+
+    measurement_json_free(json);
+
+    return outcome;
+}
+
 
 void mqtt_publisher_stop(mqtt_publisher_t *publisher)
 {

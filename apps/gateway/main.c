@@ -6,6 +6,10 @@
 
 #define DEFAULT_LOG_QUEUE_CAPACITY 256u
 
+#ifndef EDGEVISION_VERSION
+#define EDGEVISION_VERSION "development"
+#endif
+
 #ifdef EDGEVISION_ENABLE_MQTT
 
 static int parse_port(const char *text, int *output)
@@ -60,9 +64,76 @@ static int parse_arguments(int argc, char **argv, gateway_config_t *config)
     config->log_queue_capacity = DEFAULT_LOG_QUEUE_CAPACITY;
     config->mqtt_host = "127.0.0.1";
     config->mqtt_port = 1883;
+    config->storage_db_path = "gateway.db";
+    config->storage_busy_timeout_ms = 3000;
+    config->source_kind = GATEWAY_SOURCE_SIMULATED;
+    config->serial_path = "/dev/ttyS5";
+    config->gpiochip_path = "/dev/gpiochip0";
+    config->gpio_line_offset = 22u;
+    config->serial_timeout_ms = 1000;
 
     if (argc == 1) {
         return 0;
+    }
+
+    /* --version 不初始化硬件或数据库，部署脚本可以安全探测发布包。 */
+    if (argc == 2 && strcmp(argv[1], "--version") == 0)
+    {
+        printf("edge-gateway-lite %s\n", EDGEVISION_VERSION);
+        exit(EXIT_SUCCESS);
+    }
+
+    if (argc >= 3 && strcmp(argv[1], "--source") == 0)
+    {
+#ifndef EDGEVISION_ENABLE_STORAGE
+        fprintf(stderr, "--source requires Storage support\n");
+        return -1;
+#else
+        if (argc > 5 ||
+            (strcmp(argv[2], "simulated") != 0 &&
+             strcmp(argv[2], "stm32") != 0) ||
+            (argc >= 4 && argv[3][0] == '\0') ||
+            (argc == 5 && argv[4][0] == '\0'))
+        {
+            fprintf(stderr,
+                    "usage: %s --source simulated|stm32 "
+                    "[database_path [log_path]]\n",
+                    argv[0]);
+            return -1;
+        }
+
+        config->source_kind = strcmp(argv[2], "stm32") == 0
+                                  ? GATEWAY_SOURCE_STM32_MODBUS
+                                  : GATEWAY_SOURCE_SIMULATED;
+        if (argc >= 4)
+            config->storage_db_path = argv[3];
+        if (argc == 5)
+            config->log_path = argv[4];
+        return 0;
+#endif
+    }
+
+    if (argc >= 2 && strcmp(argv[1], "--db") == 0)
+    {
+#ifndef EDGEVISION_ENABLE_STORAGE
+        fprintf(stderr, "--db requires Storage support\n");
+        return -1;
+#else
+        if (argc != 3 || argv[2][0] == '\0')
+        {
+            fprintf(
+            stderr,
+            "usage: %s [--smoke [log_path] | "
+            "--mqtt-smoke [host port] | --db database_path | "
+            "--source simulated|stm32 [database_path [log_path]] | "
+            "--version | log_path]\n",
+            argv[0]);
+            return -1;
+        }
+
+        config->storage_db_path = argv[2];
+        return 0;
+#endif
     }
 
     if (argc == 2 && strcmp(argv[1], "--smoke") == 0) {
@@ -110,7 +181,9 @@ static int parse_arguments(int argc, char **argv, gateway_config_t *config)
     fprintf(
         stderr,
         "usage: %s [--smoke [log_path] | "
-        "--mqtt-smoke [host port] | log_path]\n",
+        "--mqtt-smoke [host port] | --db database_path | "
+        "--source simulated|stm32 [database_path [log_path]] | "
+        "--version | log_path]\n",
         argv[0]);
     return -1;
 }

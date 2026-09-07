@@ -71,6 +71,7 @@ static int insert_outbox(
     if (rc == SQLITE_OK) rc = sqlite3_bind_int64(stmt, 1, measurement_id);
     if (rc == SQLITE_OK) {
         if (fail_outbox)
+            /* 这里本身会返回 SQLITE_OK 但是 step执行时 topic字段为not null，会返回失败*/
             rc = sqlite3_bind_null(stmt, 2);
         else
             rc = sqlite3_bind_text(stmt, 2,
@@ -96,7 +97,7 @@ static int save_measurement_and_outbox(
     int transaction_started = 0;
     sqlite3_int64 measurement_id = 0;
 
-    /* TODO T1：用exec_sql执行BEGIN IMMEDIATE。
+    /* 用exec_sql执行BEGIN IMMEDIATE ,开启事务
      * BEGIN成功才把transaction_started设为1；失败直接返回原错误码。
      */
     rc = exec_sql(db, "BEGIN IMMEDIATE;");
@@ -104,7 +105,7 @@ static int save_measurement_and_outbox(
         return rc;
     }
     transaction_started = 1;
-    /* TODO T2：依次调用insert_measurement和insert_outbox。
+    /* 依次调用insert_measurement和insert_outbox。
      * 任一步不是SQLITE_OK都goto rollback。
      * 两步都成功后执行COMMIT；COMMIT成功时先清除transaction_started再返回SQLITE_OK。
      * COMMIT失败时事务可能仍处于活动状态，也应goto rollback。
@@ -130,7 +131,7 @@ static int save_measurement_and_outbox(
     }
 
 rollback:
-    /* TODO T3：如果transaction_started为真，显式执行ROLLBACK。
+    /* 如果transaction_started为真，显式执行ROLLBACK。
      * 保留最先失败的rc，不允许ROLLBACK成功把业务失败改成SQLITE_OK。
      * 最后返回rc。SQLite文档不保证所有错误都会自动回滚整个事务。
      */
@@ -151,7 +152,8 @@ static int print_status(sqlite3 *db)
     if (rc == SQLITE_OK) rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         printf("measurement_count=%d pending_count=%d\n",
-            sqlite3_column_int(stmt, 0), sqlite3_column_int(stmt, 1));
+            sqlite3_column_int(stmt, 0),// 取第 0 列
+             sqlite3_column_int(stmt, 1)); // 取第 1 列
         rc = SQLITE_OK;
     }
     int finish_rc = sqlite3_finalize(stmt);
@@ -193,6 +195,7 @@ int main(int argc, char **argv)
     char json[4096] = {0};
     int rc = SQLITE_OK;
     if (save || save_fail) {
+        /* 验证 json是否合法*/
         rc = read_validated_json(json);
         if (rc != SQLITE_OK) {
             fprintf(stderr, "Invalid Measurement input: rc=%d\n", rc);
@@ -201,7 +204,11 @@ int main(int argc, char **argv)
     }
 
     sqlite3 *db = NULL;
-    int flags = status ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    /* */
+    int flags = status ?
+        SQLITE_OPEN_READONLY :
+        (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+    /* 打开.db文件 */
     rc = sqlite3_open_v2(argv[2], &db, flags, NULL);
     if (rc == SQLITE_OK && !status) rc = initialize_schema(db);
     if (rc == SQLITE_OK && (save || save_fail))

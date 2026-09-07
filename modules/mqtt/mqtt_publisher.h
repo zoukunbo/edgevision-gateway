@@ -84,6 +84,24 @@ mqtt_publisher_result_t mqtt_publisher_publish(
     const measurement_t *measurement,
     int timeout_seconds);
 
+/*
+ * 发布已序列化的 JSON 到指定完整主题，使用 QoS 1、retain=false。
+ *
+ * topic、payload_json 必须非 NULL 且非空，并以 '\0' 结尾。
+ * timeout_seconds 必须大于 0。
+ *
+ * 字符串由调用方持有，在本函数返回前必须保持有效且不能修改；
+ * 本函数不释放它们，也不重新序列化或检查 JSON 内容。
+ *
+ * 只有收到本次发布对应的 PUBACK 才返回 MQTT_PUBLISHER_OK。
+ * 同一实例上的发布与 mqtt_publisher_publish() 共用串行控制。
+ */
+mqtt_publisher_result_t mqtt_publisher_publish_json(
+    mqtt_publisher_t *publisher,
+    const char *topic,
+    const char *payload_json,
+    int timeout_seconds);
+
 /* 线程安全地查询当前是否已连接；publisher 为 NULL 时返回 false。 */
 bool mqtt_publisher_is_connected(
     mqtt_publisher_t *publisher);

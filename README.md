@@ -5,9 +5,9 @@ EdgeVision Gateway 是一个面向嵌入式 Linux 的 C11 边缘数据网关学�
 持久化和进程生命周期，并保留 Linux 主机自动测试与 OK1126B-S ARM64 目标板路径。
 
 当前仓库同时包含“可复用模块”“Gateway 主程序”和“阶段性独立示例”。默认 Gateway
-已经具备模拟 Measurement、TCP 整链自检、异步日志、信号退出以及可选 MQTT 发布；
-真实 STM32/DHT11 的 Modbus RTU 采集和 SQLite Outbox 已完成独立验证，但尚未接入
-默认 Gateway 常驻主链。因此它是可验证的学习工程，不应直接视为完整生产网关。
+保留模拟源，并已接入正式 STM32/DHT11 Modbus RTU 数据源、三 worker/三条有界队列、
+SQLite WAL/Outbox、MQTT QoS 1/PUBACK 和持久化 message_id。项目已完成 102 条真实
+板端断网恢复验收；它仍是教学型 v0.1，不应直接视为完整生产网关。
 
 ## 项目全景
 
@@ -26,7 +26,7 @@ STM32/DHT11 -- RS485 -- Modbus RTU 04 -- 寄存器映射 -> Measurement V1
                                                         MQTT PUBACK -> sent
 
 Gateway Core 负责编排正式主链的日志、信号、数据源、协议和网络生命周期；
-Modbus 与 SQLite Outbox 当前仍是独立示例/部署验证，尚未组合成常驻流水线。
+正式服务使用 Source、Storage、MQTT 三 worker 解耦采集、落盘和网络确认。
 ```
 
 项目目前验证了以下能力：
@@ -45,14 +45,12 @@ Modbus 与 SQLite Outbox 当前仍是独立示例/部署验证，尚未组合成
 
 ## 当前边界
 
-- 默认 `gateway` 的数据源仍是模拟源；真实 Modbus 查询位于
-  `examples/serial/modbus_rtu_demo.c`，尚未实现为正式常驻 Source。
-- SQLite 示例使用独立的 `examples/storage/CMakeLists.txt`，尚未成为
-  `edgevision_core` 的存储模块。
-- Outbox 发布遵循 at-least-once 方向：PUBACK 后、数据库更新前崩溃可能重复发布；
-  当前没有消费者去重、并发领取、退避调度或 exactly-once 保证。
-- `edgevision-outbox.service` 是一次处理一条 pending 记录的 `oneshot` 服务，不是
-  持续运行的发送守护进程。
+- 正式源需显式使用 `--source stm32` 选择；无参数启动仍保留模拟源。
+- Outbox 遵循 at-least-once：PUBACK 后、数据库更新前崩溃可能重复发布；仓库提供
+  消费端幂等示例，但不宣称 exactly-once。
+- 第一版仅允许单条投递 inflight，尚未实现批量 lease、dead-letter 和磁盘配额。
+- `deploy/edge-gateway-lite/` 是正式常驻发布骨架；旧 `edgevision-outbox.service`
+  仍保留为历史 oneshot 教学示例。
 - PTY、GPIO 和 ioctl 替身测试只能证明软件状态机；RS485 电气时序以目标板记录为准，
   现有记录不等同于示波器波形验收。
 
@@ -75,7 +73,8 @@ examples/serial/          RS485 原始收发和 Modbus/Measurement 示例
 examples/storage/         SQLite 与 Outbox 渐进式独立示例
 examples/mqtt/            可选 MQTT 学习示例
 hardware/rs485/           接线、设备参数卡和实板证据
-deploy/edgevision-outbox/ NFS/systemd 部署脚本与模板
+deploy/edgevision-outbox/ 历史 oneshot NFS/systemd 部署
+deploy/edge-gateway-lite/ 正式常驻 v0.1 发布骨架
 tests/                    单元、集成、异常路径与压力测试
 docs/                     设计、教程、进度和目标板验证记录
 third_party/cjson/        内置 cJSON
@@ -124,6 +123,8 @@ ctest --test-dir build -R '^net_stress$' --output-on-failure
 
 ## 运行 Gateway
 
+查看发布版本不会初始化硬件或数据库：`./build/gateway --version`。
+
 常驻模式初始化信号处理和异步日志后等待退出：
 
 ```bash
@@ -143,6 +144,16 @@ ctest --test-dir build -R '^net_stress$' --output-on-failure
 
 `--smoke` 连续发送 100 条不同 Measurement；接收端从字节流恢复帧、解析 JSON、
 逐字段核对，并按序返回 `MeasurementAck`。成功时标准输出包含 `SMOKE_PASS`。
+
+正式 STM32 + SQLite Outbox + MQTT 服务需要联合构建：
+
+```bash
+cmake -S . -B build-service -DEDGEVISION_ENABLE_STORAGE=ON -DEDGEVISION_ENABLE_MQTT=ON
+cmake --build build-service --parallel
+./build-service/gateway --source stm32 ./gateway.db ./gateway.log
+```
+
+发布与 systemd 部署见 [`deploy/edge-gateway-lite/README.md`](deploy/edge-gateway-lite/README.md)。
 
 ## 可选 MQTT 构建
 
@@ -209,12 +220,14 @@ MAGIC(0xA5 0x5A) + LEN(1 byte) + PAYLOAD + CRC16(2 bytes)
 
 ## 文档索引
 
+- [完整文档导航与当前统一口径](docs/README.md)
 - [Measurement V1 数据契约](docs/d33-measurement-contract.md)
 - [TCP 协议帧与 Modbus RTU 对照](docs/d32-tcp-framing-modbus-rtu.md)
 - [STM32/DHT11 Modbus RTU 读取记录](docs/stm32-dht11-modbus-read.md)
 - [PC Modbus 到 Measurement 映射](docs/pc-modbus-measurement-mapping.md)
 - [SQLite Outbox 初学者教程](docs/modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md)
 - [systemd + NFS 目标板部署指南](docs/systemd-nfs-board-deployment-2026-09-01.md)
+- [D40 正式链路实现复盘](docs/d40-stm32-modbus-outbox-gateway-implementation-2026-09-07.md)
 - [可审计历史回放记录](docs/d42-auditable-replay-2026-09-01.md)
 - [D36-D42 审计与下一阶段计划](docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md)
 - [最新学习进度](docs/learning-progress-2026-08-31.md)
