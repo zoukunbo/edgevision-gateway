@@ -11,6 +11,7 @@
 | 对象 | 固定值 |
 | --- | --- |
 | 输入文件 | `deploy/nfs-root/edgevision-outbox/share/temperature-replay.json` |
+| 版本控制源文件 | `examples/storage/temperature-replay.json`；`deploy/nfs-root/` 是本地组装产物，新 clone 需按部署教程生成 |
 | 输入 SHA256 | `1b5cc3d3ce5d0526dfdcf51a716b472b7590588ec0e00749420660f2a8a19ac2` |
 | device | `stm32-dht11-01` |
 | metric/value | `temperature / 26.1 celsius` |

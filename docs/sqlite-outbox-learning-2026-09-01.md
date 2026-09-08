@@ -1,5 +1,8 @@
 # SQLite / Outbox 学习总结｜2026-09-01
 
+> 历史阶段总结。文末“下一入口 D41+D42”是 2026-09-01 当时的推进顺序；当前状态与
+> 下一步以 [W06 严格审计](week06-d36-d42-audit-and-next-plan-2026-09-02.md) 为准。
+
 ## 已完成的数据流
 
 历史真实STM32 Measurement JSON → SQLite事务保存Measurement与pending Outbox → 进程退出/重开仍pending → 现有mqtt_publisher QoS1发布 → WSL Broker → 独立订阅端 → PUBACK后sent。
@@ -21,4 +24,6 @@ Measurement和Outbox必须同一事务提交；错误路径显式回滚并保留
 
 ## 下一入口
 
-进入C块D41+D42，先做干净构建与历史数据回放的最小可复现部署说明，不重新查询硬件，不把整个部署周一次铺开。
+当时的下一步是进入 C 块 D41+D42，先做干净构建与历史数据回放的最小可复现部署
+说明。该最小部署与回放后来已经执行；当前应先把 Storage/Outbox 抽成正式模块，
+不能继续把独立示例扩大解释为主工程已接入。

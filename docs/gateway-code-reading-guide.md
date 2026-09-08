@@ -1,5 +1,9 @@
 # `core/gateway.c` 阅读指南
 
+> 本文重点讲解默认 TCP smoke 与核心编排。当前代码还支持可选 MQTT smoke，但真实
+> Modbus Source 和 SQLite/Outbox 仍未接入 `edgevision_core`；项目全貌和当前边界见
+> [文档导航](README.md)。文中的测试数量属于编写时快照，不作为当前测试清单。
+
 ## 1. 先建立整体认识
 
 `core/gateway.c` 不负责实现 JSON、TCP、协议帧或日志的底层算法。

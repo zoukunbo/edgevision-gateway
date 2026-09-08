@@ -10,8 +10,10 @@ TCP只传输字节；frame通过LEN恢复完整payload。当前约定一帧承�
 
 - schema_version：number，必须等于1
 - device_id：string，非空，最多63字符
-- sequence：number，每台设备独立递增，范围1..UINT32_MAX
-- timestamp_ms：number，UTC Unix采样时间，单位毫秒，必须大于0
+- sequence：number，范围1..UINT32_MAX；“每台设备独立递增”由数据生产者和跨记录
+  逻辑保证，单条 `measurement_validate()` 只能检查非零及可表示范围
+- timestamp_ms：number，语义上是生产者提供的 UTC Unix 采样/接收时间，单位毫秒；
+  单条校验只确认它是大于0的可表示整数，不能证明时钟来源或准确性
 - metric：string，非空，最多31字符
 - value：number，必须是有限数字
 - unit：string，非空，最多15字符

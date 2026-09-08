@@ -29,7 +29,7 @@ quality=good只表示数据符合本模拟表及领域契约，不是硬件验�
 
 ## 这次只练一个行为
 
-已在examples/serial/modbus_rtu_demo.c的map_pc_registers中完成：
+已在 `examples/serial/modbus_rtu_demo.c` 的 `map_registers()` 中完成：
 1. TODO M1：范围检查和数值映射到局部pending。
 2. TODO M2：复用领域校验，两个记录都合法后才交付output。
 
@@ -136,6 +136,7 @@ PC在正常模拟回复之后，再次收到了额外字节01 83 03 01 31。
 ### 学习停止点
 
 本轮成功路径与之前独立的不应答超时、映射越界拒绝证据共同构成A块最小学习结果。
-接收预算不覆盖write/tcdrain；序号仍是单次演示序号，两条MQTT发布不具有原子性。
+接收预算不覆盖 `write_full()` 及独立的发送完成检查；序号仍是单次演示序号，
+两条 MQTT 发布不具有原子性。
 现有状态不能抵抗进程重启或断网丢失，这属于下一学习块B的SQLite/Outbox主题。
 不以进入下一块为理由声称真实传感器验收通过，也不在本轮提前实现B。

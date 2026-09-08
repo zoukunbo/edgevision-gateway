@@ -5,6 +5,12 @@ Buildroot 交叉编译以及 ADB、SCP、NFS 部署流程，并给出后续工�
 
 初次实板验证：2026-08-29；任务范围核对：2026-08-30。
 
+> **版本提示：** 本文主体保留 2026-08-29～30 的首次实现过程，其中
+> `write_full -> tcdrain -> RX` 是当时方案。2026-08-31 实板排障后，当前代码已改为
+> `write_full -> TIOCOUTQ=0 且 TIOCSER_TEMT -> RX`，详见
+> [STM32 DHT11 真实读取记录](stm32-dht11-modbus-read.md)。当前任务状态统一以
+> [W06 严格审计](week06-d36-d42-audit-and-next-plan-2026-09-02.md) 为准。
+
 > 本文是使用手册，不是 D36 当天待办。当前学习停止点与范围以D36收尾文档为准。D36 核对结论见
 > [D36 收尾核对](d36-closeout.md)，接线、参数和证据见
 > [hardware/rs485](../hardware/rs485/README.md)。电脑串口助手收发成功

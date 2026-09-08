@@ -19,7 +19,7 @@
 
 - `modules/net/network_client.h`：公共配置和生命周期 API
 - `modules/net/network_client.c`：线程、状态机和网络机制
-- `examples/NetworkClient.c`：最小使用示例
+- `examples/net/NetworkClient.c`：最小使用示例
 
 ---
 
