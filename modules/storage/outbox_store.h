@@ -113,6 +113,11 @@ outbox_store_result_t outbox_store_read_earliest_pending(outbox_store_t *store, 
  */
 outbox_store_result_t outbox_store_mark_sent(outbox_store_t *store, int64_t outbox_id, int64_t sent_at_ms);
 
+/* 成功表示数据库写入完成；不修改 worker 的运行配置。 */
+outbox_store_result_t outbox_store_save_interval(
+    outbox_store_t *store,
+    int interval_ms);
+
 /**
  * @brief 返回 Measurement、pending、sent 数量
  * @param store 存储实例
@@ -133,5 +138,13 @@ outbox_store_result_t outbox_store_get_stats(outbox_store_t *store, outbox_store
  * @return 结果码
  */
 outbox_store_result_t outbox_store_record_delivery_failure(outbox_store_t *store, int64_t outbox_id, const char* error_text);
+
+/* OK：读取成功并更新输出。
+ * EMPTY：尚未保存配置，输出不变。
+ * 其他结果：读取失败，输出不变。
+ */
+outbox_store_result_t outbox_store_load_interval(
+    outbox_store_t *store,
+    int *out_interval_ms);
 
 #endif // !EDGEVISION_STORAGE_OUTBOX_STORE_H

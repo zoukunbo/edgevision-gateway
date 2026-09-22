@@ -4,10 +4,33 @@ EdgeVision Gateway 是一个面向嵌入式 Linux 的 C11 边缘数据网关学�
 `Measurement V1` 为统一数据契约，逐步验证设备采集、协议校验、可靠传输、离线
 持久化和进程生命周期，并保留 Linux 主机自动测试与 OK1126B-S ARM64 目标板路径。
 
-当前仓库同时包含“可复用模块”“Gateway 主程序”和“阶段性独立示例”。默认 Gateway
-保留模拟源，并已接入正式 STM32/DHT11 Modbus RTU 数据源、三 worker/三条有界队列、
-SQLite WAL/Outbox、MQTT QoS 1/PUBACK 和持久化 message_id。项目已完成 102 条真实
-板端断网恢复验收；它仍是教学型 v0.1，不应直接视为完整生产网关。
+当前仓库同时包含“可复用模块”“Gateway 主程序”和“阶段性独立示例”。启用 Storage
+后可选择模拟源或 STM32/DHT11 Modbus RTU 数据源；同时启用 Storage 与 MQTT 后，正式
+服务使用 Source、Storage、MQTT 三个数据 worker 和一个本地命令 worker，
+三条有界队列串联 SQLite WAL/Outbox、MQTT QoS 1/PUBACK 和持久化
+`message_id`。项目已完成 102 条真实板端断网恢复验收；它仍是教学型 v0.1，不应直接
+视为完整生产网关。
+
+## 快速开始
+
+在 Ubuntu/Debian 主机上安装默认构建依赖：
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake zlib1g-dev
+```
+
+完成默认构建和测试：
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+./build/gateway --smoke
+```
+
+`--smoke` 不访问串口、SQLite 或 MQTT Broker，适合首次拉取代码后验证本机工具链和
+TCP/Measurement/JSON/协议帧整链。成功时终端会输出 `SMOKE_PASS`。
 
 ## 项目全景
 
@@ -26,7 +49,8 @@ STM32/DHT11 -- RS485 -- Modbus RTU 04 -- 寄存器映射 -> Measurement V1
                                                         MQTT PUBACK -> sent
 
 Gateway Core 负责编排正式主链的日志、信号、数据源、协议和网络生命周期；
-正式服务使用 Source、Storage、MQTT 三 worker 解耦采集、落盘和网络确认。
+正式服务使用 Source、Storage、MQTT 三个数据 worker 解耦采集、落盘和
+网络确认，command worker 通过本地 Unix socket 提供运行状态查询。
 ```
 
 项目目前验证了以下能力：
@@ -42,10 +66,16 @@ Gateway Core 负责编排正式主链的日志、信号、数据源、协议和�
 - 可选 libmosquitto MQTT QoS 1 发布、PUBACK 等待与有限重连。
 - SQLite Measurement 持久化、Measurement/Outbox 原子提交及确认后标记 `sent`。
 - CMake/CTest 单元、集成、异常路径、退出、冒烟和压力测试。
+- 本地 Unix socket 命令通道，可用 `gatewayctl status` 查询采集周期和累计采集数。
 
 ## 当前边界
 
-- 正式源需显式使用 `--source stm32` 选择；无参数启动仍保留模拟源。
+- 默认构建未启用 Storage 或 MQTT；无参数启动只运行日志和信号生命周期，收到
+  `SIGINT`/`SIGTERM` 后退出，不会采集或发布数据。
+- 启用 Storage 后，无参数启动使用模拟源并持续写入 SQLite；真实硬件源需显式使用
+  `--source stm32` 选择。
+- 只有同时启用 Storage 与 MQTT 时才运行三 worker Outbox 投递链；仅启用其中一个
+  功能时不会形成完整的“采集、落盘、发布、确认”链路。
 - Outbox 遵循 at-least-once：PUBACK 后、数据库更新前崩溃可能重复发布；仓库提供
   消费端幂等示例，但不宣称 exactly-once。
 - 第一版仅允许单条投递 inflight，尚未实现批量 lease、dead-letter 和磁盘配额。
@@ -72,6 +102,7 @@ examples/net/             网络 API 学习示例
 examples/serial/          RS485 原始收发和 Modbus/Measurement 示例
 examples/storage/         SQLite 与 Outbox 渐进式独立示例
 examples/mqtt/            可选 MQTT 学习示例
+examples/gatewayctl.c      Gateway 本地命令客户端
 hardware/rs485/           接线、设备参数卡和实板证据
 deploy/edgevision-outbox/ 历史 oneshot NFS/systemd 部署
 deploy/edge-gateway-lite/ 正式常驻 v0.1 发布骨架
@@ -93,8 +124,34 @@ third_party/cjson/        内置 cJSON
 - POSIX Threads；
 - zlib。
 
-启用 MQTT 时还需要 `pkg-config` 和 libmosquitto 开发包。构建 SQLite 独立示例还
-需要 SQLite3 开发包；该子工程当前也会查找 libmosquitto。cJSON 已随仓库提供。
+启用 MQTT 时还需要 `pkg-config` 和 libmosquitto 开发包，启用 Storage 时需要
+SQLite3 开发包：
+
+```bash
+sudo apt install pkg-config libmosquitto-dev libsqlite3-dev
+```
+
+SQLite 独立示例子工程会同时查找 SQLite3 和 libmosquitto。cJSON 已随仓库提供，
+无需单独安装。
+
+## 构建功能矩阵
+
+| Storage | MQTT | Gateway 服务模式行为 |
+| --- | --- | --- |
+| OFF | OFF | 日志与信号生命周期；可运行本地 `--smoke` |
+| ON | OFF | 从模拟源或 STM32 源采集并写入 SQLite |
+| OFF | ON | 基础服务不采集；可运行 `--mqtt-smoke` |
+| ON | ON | 三 worker 正式链路：采集、Outbox 落盘、MQTT 发布和结果回写 |
+
+两个功能默认均为 `OFF`。常用 CMake 开关如下：
+
+| 开关 | 默认值 | 用途 |
+| --- | --- | --- |
+| `EDGEVISION_ENABLE_STORAGE` | `OFF` | 构建 SQLite Store，并启用数据源服务 |
+| `EDGEVISION_ENABLE_MQTT` | `OFF` | 构建 MQTT Publisher 和 MQTT smoke |
+| `EDGEVISION_BUILD_MQTT_EXAMPLE` | `OFF` | 构建主机 MQTT 学习示例；要求 MQTT 同时开启 |
+| `EDGEVISION_WARNINGS_AS_ERRORS` | `ON` | 将编译警告视为错误 |
+| `BUILD_TESTING` | `ON` | 构建并注册 CTest 测试 |
 
 ## 构建与测试
 
@@ -105,6 +162,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
+
+CMake 会在构建目录生成 `compile_commands.json`。仓库根目录的 `.clangd`
+还为可选功能源文件提供通用头文件搜索路径；因此即使当前构建关闭
+Storage/MQTT，clangd 也能正确解析 `gateway_workers.c` 中的自定义类型和函数。
+修改 CMake 功能开关后，建议重新配置构建目录并在编辑器中重启语言服务。
 
 编译默认开启 `-Wall -Wextra -Wpedantic -Werror`。如需临时允许警告：
 
@@ -123,7 +185,28 @@ ctest --test-dir build -R '^net_stress$' --output-on-failure
 
 ## 运行 Gateway
 
-查看发布版本不会初始化硬件或数据库：`./build/gateway --version`。
+查看发布版本不会初始化硬件或数据库：
+
+```bash
+./build/gateway --version
+```
+
+当前命令行形式为：
+
+```text
+gateway
+gateway [log_path]
+gateway --version
+gateway --smoke [log_path]
+gateway --mqtt-smoke [host port]
+gateway --db database_path
+gateway --source simulated|stm32 [database_path [log_path]]
+```
+
+其中 `--mqtt-smoke` 仅在启用 MQTT 的构建中可用；`--db` 和 `--source` 仅在启用
+Storage 的构建中可用。服务参数当前采用位置参数；Gateway v0.1 的正式服务固定使用
+MQTT `127.0.0.1:1883`、串口 `/dev/ttyS5`、GPIO 芯片 `/dev/gpiochip0` 和 line 22。
+部署环境文件目前负责选择数据源以及发布包、数据库和日志路径。
 
 常驻模式初始化信号处理和异步日志后等待退出：
 
@@ -148,9 +231,30 @@ ctest --test-dir build -R '^net_stress$' --output-on-failure
 正式 STM32 + SQLite Outbox + MQTT 服务需要联合构建：
 
 ```bash
-cmake -S . -B build-service -DEDGEVISION_ENABLE_STORAGE=ON -DEDGEVISION_ENABLE_MQTT=ON
+cmake -S . -B build-service \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DEDGEVISION_ENABLE_STORAGE=ON \
+    -DEDGEVISION_ENABLE_MQTT=ON
 cmake --build build-service --parallel
 ./build-service/gateway --source stm32 ./gateway.db ./gateway.log
+```
+
+服务启动后，可在另一个终端查询运行状态：
+
+```bash
+./build-service/gatewayctl status
+```
+
+客户端通过 `/tmp/edgevision-study.sock` 发送以换行结尾的命令。当前支持
+`status`，返回 `interval_ms` 和 `collected_count`；未知命令返回
+`error=unknown_command`。该命令 worker 只在 Storage 和 MQTT 同时启用的服务中运行。
+
+若只想在本机验证持久化链路，可启用 Storage 并使用默认模拟源：
+
+```bash
+cmake -S . -B build-storage-service -DEDGEVISION_ENABLE_STORAGE=ON
+cmake --build build-storage-service --parallel
+./build-storage-service/gateway --source simulated ./gateway.db ./gateway.log
 ```
 
 发布与 systemd 部署见 [`deploy/edge-gateway-lite/README.md`](deploy/edge-gateway-lite/README.md)。
@@ -164,6 +268,8 @@ cmake -S . -B build-mqtt \
 cmake --build build-mqtt --parallel
 ctest --test-dir build-mqtt --output-on-failure
 ./build-mqtt/gateway --mqtt-smoke
+# 或指定 Broker：
+./build-mqtt/gateway --mqtt-smoke 192.168.1.10 1883
 ```
 
 默认 Broker 为 `127.0.0.1:1883`，主题为
@@ -201,6 +307,10 @@ cmake --build build-storage --parallel
 2. `sqlite_outbox_demo`：同一事务提交 Measurement 与 pending Outbox。
 3. `sqlite_outbox_delivery_demo`：用离线发布替身验证“确认后再标记 sent”。
 4. `sqlite_outbox_mqtt_demo`：真实 QoS 1 PUBACK 后标记 sent。
+
+主工程启用 Storage 时还会生成 `sqlite_idempotent_consumer_demo`，用于从标准输入读取
+带 `message_id` 的 JSON 并通过 SQLite 持久化去重，演示 at-least-once 下的消费端
+幂等处理。
 
 示例输入 `temperature-replay.json` 是历史实测记录的回放，不代表当前传感器温度。
 本地数据库、WAL/SHM 文件和组装后的 `deploy/nfs-root/` 发布包由 `.gitignore` 排除；

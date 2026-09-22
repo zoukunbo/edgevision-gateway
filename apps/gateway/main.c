@@ -1,4 +1,5 @@
 #include "gateway.h"
+#include "interval_config.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -71,6 +72,7 @@ static int parse_arguments(int argc, char **argv, gateway_config_t *config)
     config->gpiochip_path = "/dev/gpiochip0";
     config->gpio_line_offset = 22u;
     config->serial_timeout_ms = 1000;
+    config->initial_interval_ms = 1000;
 
     if (argc == 1) {
         return 0;
@@ -205,6 +207,24 @@ int main(int argc, char **argv)
     if (parse_arguments(argc, argv, &config) != 0) {
         return EXIT_FAILURE;
     }
+
+    if (config.mode == GATEWAY_MODE_SERVICE)
+    {
+        int rc = load_interval_file("gateway.conf", &config.initial_interval_ms);
+
+        if (rc == -1)
+        {
+            fprintf(stderr, "Failed to read gateway.conf: invalid content or I/O error\n");
+            return EXIT_FAILURE;
+        }
+        if (rc == 1)
+        {
+            fprintf(stderr, "gateway.conf not found; using default interval_ms=%d\n",
+                    config.initial_interval_ms);
+        }
+        
+    }
+    
 
     return gateway_run(&config) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

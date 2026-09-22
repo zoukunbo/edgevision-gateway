@@ -811,6 +811,20 @@ int gateway_run(const gateway_config_t *config)
         goto SHUTDOWN;
     }
 
+    int initial_interval_ms = config->initial_interval_ms;
+
+    storage_result =
+        outbox_store_load_interval(store, &initial_interval_ms);
+
+    if (storage_result != OUTBOX_STORE_OK &&
+        storage_result != OUTBOX_STORE_EMPTY)
+    {
+        fprintf(stderr, "load saved interval failed: %d\n",
+                (int)storage_result);
+        goto SHUTDOWN;
+    }
+    
+
     outbox_store_stats_t stats = {0};
 
     storage_result = outbox_store_get_stats(store, &stats);
@@ -895,7 +909,19 @@ int gateway_run(const gateway_config_t *config)
     int service_result;
 
 #if defined(EDGEVISION_ENABLE_STORAGE) && defined(EDGEVISION_ENABLE_MQTT)
-    service_result = gateway_workers_run(store, &source, publisher);
+    gateway_workers_config_t workers_config = {
+        .initial_interval_ms = initial_interval_ms,
+        .mqtt_host = config->mqtt_host,
+        .mqtt_port = config->mqtt_port,
+        .mqtt_command_client_id = 
+            "edgevision-gateway-command-receiver",
+        .mqtt_command_request_topic = 
+            "edgevision/v1/devices/gateway-01/commands/request",
+        .mqtt_command_response_topic = 
+            "edgevision/v1/devices/gateway-01/commands/response"
+    };
+
+    service_result = gateway_workers_run(store, &source, publisher, &workers_config);
 #else
     service_result = run_storage_service(store, &source);
 #endif

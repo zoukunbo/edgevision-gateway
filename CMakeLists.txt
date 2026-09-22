@@ -284,7 +284,9 @@ if(EDGEVISION_ENABLE_MQTT)
 
     # 正式 MQTT 适配层编译为静态库，应用只需链接这个逻辑目标。
     add_library(edgevision_mqtt STATIC
+        modules/mqtt/mqtt_library_runtime.c
         modules/mqtt/mqtt_publisher.c
+        modules/mqtt/mqtt_command_receiver.c
     )
 
     # PUBLIC 使链接者能够直接 #include "mqtt_publisher.h"。
@@ -318,6 +320,10 @@ if(EDGEVISION_ENABLE_MQTT)
             examples/mqtt/mqtt_reconnect_demo.c
         )
 
+        add_executable(mqtt_command_receiver_demo
+            examples/mqtt_command_receiver_demo.c
+        )
+
         target_compile_definitions(mqtt_publish_once PRIVATE
             _POSIX_C_SOURCE=200809L
         )
@@ -333,8 +339,13 @@ if(EDGEVISION_ENABLE_MQTT)
             edgevision_mqtt
         )
 
+        target_link_libraries(mqtt_command_receiver_demo PRIVATE
+            edgevision_mqtt
+        )
+
         edgevision_enable_warnings(mqtt_publish_once)
         edgevision_enable_warnings(mqtt_reconnect_demo)
+        edgevision_enable_warnings(mqtt_command_receiver_demo)
     endif()
 elseif(EDGEVISION_BUILD_MQTT_EXAMPLE)
     # 防止用户只打开示例，却得到缺少 edgevision_mqtt 的模糊链接错误。
@@ -346,6 +357,7 @@ endif()
 # 核心编排层负责组织网络、协议、日志和退出流程。
 add_library(edgevision_core STATIC
     core/gateway.c
+    core/interval_config.c
 )
 target_include_directories(edgevision_core PUBLIC
     core
@@ -473,6 +485,15 @@ target_link_libraries(network_client_demo PRIVATE
     edgevision_net
 )
 edgevision_enable_warnings(network_client_demo)
+
+# Gateway 本地控制客户端：向 command worker 的 Unix socket 发送单行命令。
+add_executable(gatewayctl
+    examples/gatewayctl.c
+)
+target_compile_definitions(gatewayctl PRIVATE
+    _POSIX_C_SOURCE=200809L
+)
+edgevision_enable_warnings(gatewayctl)
 
 # OK1126B-S UART5 + GPIO22 半双工 RS485 学习验证程序。
 add_executable(rs485_demo

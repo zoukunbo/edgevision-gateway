@@ -32,6 +32,7 @@ typedef struct
     const char *gpiochip_path;
     unsigned int gpio_line_offset;
     int serial_timeout_ms;
+    int initial_interval_ms;
 } gateway_config_t;
 
 /**

@@ -1,0 +1,33 @@
+CompileFlags:
+  # 默认 build 可能关闭 Storage/MQTT，导致条件源文件不在 compile_commands.json
+  # 中。为 clangd 补充全仓库公共头文件路径，使这些文件也能独立解析。
+  Add:
+    - -std=c11
+    - -D_POSIX_C_SOURCE=200809L
+    - -Icore
+    - -Idomain
+    - -Imodules/blocking_queue
+    - -Imodules/log
+    - -Imodules/mqtt
+    - -Imodules/net
+    - -Imodules/protocol
+    - -Imodules/runtime
+    - -Imodules/serial
+    - -Imodules/source
+    - -Imodules/storage
+    - -Ithird_party/cjson
+    # 当 clangd 从 build/ 中的相似编译命令推断参数时，相对路径以
+    # build/ 为起点；同时保留上面以源码根目录为起点的路径。
+    - -I../core
+    - -I../domain
+    - -I../modules/blocking_queue
+    - -I../modules/log
+    - -I../modules/mqtt
+    - -I../modules/net
+    - -I../modules/protocol
+    - -I../modules/runtime
+    - -I../modules/serial
+    - -I../modules/source
+    - -I../modules/storage
+    - -I../third_party/cjson
+

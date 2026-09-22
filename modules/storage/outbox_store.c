@@ -5,7 +5,7 @@
 #include <string.h>
 #include <sqlite3.h>
 
-#define EDGEVISION_OUTBOX_STORE_SCHEMA_VERSION 3
+#define EDGEVISION_OUTBOX_STORE_SCHEMA_VERSION 4
 #define EDGEVISION_STRINGIFY_IMPL(value) #value
 #define EDGEVISION_STRINGIFY(value) EDGEVISION_STRINGIFY_IMPL(value)
 
@@ -213,6 +213,10 @@ static outbox_store_result_t outbox_store_create_schema(sqlite3 *db)
         "sent_at_ms INTEGER"
         ");"
         "CREATE INDEX idx_outbox_state_id ON outbox(state, id);"
+        "CREATE TABLE gateway_config( "
+        "id INTEGER PRIMARY KEY CHECK(id = 1),"
+        "interval_ms INTEGER NOT NULL "
+        "CHECK(interval_ms BETWEEN 100 AND 60000) );"
         "PRAGMA user_version = "
         EDGEVISION_STRINGIFY(EDGEVISION_OUTBOX_STORE_SCHEMA_VERSION)
         ";"
@@ -301,8 +305,7 @@ static outbox_store_result_t outbox_store_migrate_v2_to_v3(sqlite3 *db)
         "DROP TABLE outbox;"
         "ALTER TABLE outbox_v3 RENAME TO outbox;"
         "CREATE INDEX idx_outbox_state_id ON outbox(state, id);"
-        "PRAGMA user_version = "
-        EDGEVISION_STRINGIFY(EDGEVISION_OUTBOX_STORE_SCHEMA_VERSION)
+        "PRAGMA user_version = 3"
         ";"
         "COMMIT;";
 
@@ -318,6 +321,35 @@ static outbox_store_result_t outbox_store_migrate_v2_to_v3(sqlite3 *db)
     {
         return result;
     }
+    return OUTBOX_STORE_SCHEMA_ERROR;
+}
+
+static outbox_store_result_t outbox_store_migrate_v3_to_v4(sqlite3 *db)
+{
+    static const char sql[] = 
+    "BEGIN IMMEDIATE;"
+    "CREATE TABLE gateway_config("
+    "id INTEGER PRIMARY KEY CHECK(id = 1),"
+    "interval_ms INTEGER NOT NULL "
+    "CHECK(interval_ms BETWEEN 100 AND 60000)"
+    ");"
+    "PRAGMA user_version = 4;"
+    "COMMIT;";
+
+    int rc = sqlite3_exec(db, sql, NULL, NULL, NULL);
+    if (rc == SQLITE_OK)
+    {
+        return OUTBOX_STORE_OK;
+    }
+
+    outbox_store_result_t result = map_sqlite_result(rc);
+    (void)sqlite3_exec(db, "ROLLBACK;", NULL, NULL, NULL);
+
+    if (result == OUTBOX_STORE_BUSY || result == OUTBOX_STORE_NO_MEMORY)
+    {
+        return result;
+    }
+    
     return OUTBOX_STORE_SCHEMA_ERROR;
 }
 
@@ -422,6 +454,17 @@ static outbox_store_result_t verify_current_schema(sqlite3 *db)
 
 
     result = outbox_store_table_exists(db, "outbox", &exists);
+
+    if (result != OUTBOX_STORE_OK)
+    {
+        return result;
+    }
+
+
+    if (exists != 1)
+        return OUTBOX_STORE_SCHEMA_ERROR;
+
+    result = outbox_store_table_exists(db, "gateway_config", &exists);
 
     if (result != OUTBOX_STORE_OK)
     {
@@ -556,6 +599,13 @@ outbox_store_result_t outbox_store_open(const outbox_store_config_t *config,
         {
             result = outbox_store_read_user_version(store->db, &version);
         }
+    }
+
+    if (result == OUTBOX_STORE_OK && version == 3)
+    {
+        result = outbox_store_migrate_v3_to_v4(store->db);
+        if (result == OUTBOX_STORE_OK)
+            result = outbox_store_read_user_version(store->db, &version);
     }
 
     if (result != OUTBOX_STORE_OK || version != EDGEVISION_OUTBOX_STORE_SCHEMA_VERSION)
@@ -1234,4 +1284,106 @@ cleanup:
     return affected_rows == 0
                ? OUTBOX_STORE_NOT_FOUND
                : OUTBOX_STORE_OK;
+}
+
+outbox_store_result_t outbox_store_save_interval(
+    outbox_store_t *store,
+    int interval_ms)
+{
+    if (store == NULL || store->db == NULL ||
+        interval_ms < 100 || interval_ms > 60000) {
+        return OUTBOX_STORE_INVALID_ARGUMENT;
+    }
+
+    const char *sql =
+        "INSERT INTO gateway_config(id, interval_ms) VALUES(1, ?1) "
+        "ON CONFLICT(id) DO UPDATE "
+        "SET interval_ms = excluded.interval_ms;";
+
+    sqlite3_stmt *stmt = NULL;
+    outbox_store_result_t result = OUTBOX_STORE_OK;
+
+    int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        result = map_sqlite_result(rc);
+        goto cleanup;
+    }
+
+    rc = sqlite3_bind_int(stmt, 1, interval_ms);
+    if (rc != SQLITE_OK)
+    {
+        result = map_sqlite_result(rc);
+        goto cleanup;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc != SQLITE_DONE)
+    {
+        result = map_sqlite_result(rc);
+        goto cleanup;
+    }
+    
+
+
+cleanup:
+    if (stmt != NULL) {
+        int finalize_rc = sqlite3_finalize(stmt);
+        if (result == OUTBOX_STORE_OK && finalize_rc != SQLITE_OK)
+            result = map_sqlite_result(finalize_rc);
+    }
+
+    return result;
+}
+
+/* OK：读取成功并更新输出。
+ * EMPTY：尚未保存配置，输出不变。
+ * 其他结果：读取失败，输出不变。
+ */
+outbox_store_result_t outbox_store_load_interval(
+    outbox_store_t *store,
+    int *out_interval_ms)
+{
+    if (store == NULL || store->db == NULL || out_interval_ms == NULL)
+        return OUTBOX_STORE_INVALID_ARGUMENT;
+
+    const char *sql =
+        "SELECT interval_ms FROM gateway_config WHERE id = 1;";
+    sqlite3_stmt *stmt = NULL;
+    sqlite3_int64 value = 0;
+    outbox_store_result_t result = OUTBOX_STORE_OK;
+
+    int rc = sqlite3_prepare_v2(store->db, sql, -1, &stmt, NULL);
+    if (rc != SQLITE_OK) {
+        result = map_sqlite_result(rc);
+        goto CLEANUP;
+    }
+
+    rc = sqlite3_step(stmt);
+    if (rc == SQLITE_DONE) {
+        result = OUTBOX_STORE_EMPTY;
+    } else if (rc == SQLITE_ROW) {
+        if (sqlite3_column_type(stmt, 0) != SQLITE_INTEGER) {
+            result = OUTBOX_STORE_SCHEMA_ERROR;
+            goto CLEANUP;
+        }
+        value = sqlite3_column_int64(stmt, 0);
+        if (value < 100 || value > 60000) {
+            result = OUTBOX_STORE_SCHEMA_ERROR;
+            goto CLEANUP;
+        }
+    } else {
+        result = map_sqlite_result(rc);
+    }
+
+CLEANUP:
+    if (stmt != NULL) {
+        int finalize_rc = sqlite3_finalize(stmt);
+        if ((result == OUTBOX_STORE_OK ||
+             result == OUTBOX_STORE_EMPTY) &&
+            finalize_rc != SQLITE_OK)
+            result = map_sqlite_result(finalize_rc);
+    }
+    if (result == OUTBOX_STORE_OK)
+        *out_interval_ms = (int)value;
+    return result;
 }

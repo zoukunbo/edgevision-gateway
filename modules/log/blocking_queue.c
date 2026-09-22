@@ -300,7 +300,7 @@ bq_result_t bq_pop(bounded_queue_t *q, void *out, int timeout_ms)
 
     return BQ_OK;
 }
-
+ 
 
 /*
  * 声明 close

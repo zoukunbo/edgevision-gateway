@@ -8,6 +8,7 @@
 
 #include "mqtt_publisher.h"
 #include "measurement_json.h"
+#include "mqtt_library_runtime.h"
 
 #include <mosquitto.h>
 #include <pthread.h>
@@ -25,10 +26,6 @@
 #define MQTT_CLIENT_ID_CAPACITY 128
 #define MQTT_TOPIC_PREFIX_CAPACITY 128
 #define MQTT_TOPIC_CAPACITY 384
-
-/* libmosquitto 的全局初始化不是线程安全的，需要在多个实例之间引用计数。 */
-static pthread_mutex_t library_mutex = PTHREAD_MUTEX_INITIALIZER;
-static unsigned int library_reference_count;
 
 /* 发布器内部生命周期状态。DISCONNECTED 状态下网络线程仍会自动重连。 */
 typedef enum
@@ -83,39 +80,6 @@ struct mqtt_publisher
 static bool string_fits(const char *value, size_t capacity)
 {
     return value != NULL && value[0] != '\0' && strlen(value) < capacity;
-}
-
-/* 获取一个全局库引用；第一个实例负责执行 mosquitto_lib_init。 */
-static bool library_acquire(void)
-{
-    int result = MOSQ_ERR_SUCCESS;
-
-    pthread_mutex_lock(&library_mutex);
-
-    /* 只有 0 -> 1 时需要真正初始化全局库。 */
-    if (library_reference_count == 0)
-        result = mosquitto_lib_init();
-
-    if (result == MOSQ_ERR_SUCCESS)
-        ++library_reference_count;
-
-    pthread_mutex_unlock(&library_mutex);
-    return result == MOSQ_ERR_SUCCESS;
-}
-
-/* 最后一个发布器销毁后再释放 libmosquitto 的全局资源。 */
-static void library_release(void)
-{
-    pthread_mutex_lock(&library_mutex);
-
-    if (library_reference_count > 0)
-    {
-        --library_reference_count;
-        if (library_reference_count == 0)
-            (void)mosquitto_lib_cleanup();
-    }
-
-    pthread_mutex_unlock(&library_mutex);
 }
 
 /* 网络线程报告连接结果，并唤醒等待连接的业务线程。 */
@@ -201,14 +165,14 @@ mqtt_publisher_t *mqtt_publisher_create(
     }
 
     /* libmosquitto 必须先于 mosquitto_new 初始化。 */
-    if (!library_acquire())
+    if (!mqtt_library_acquire())
         return NULL;
 
     /* calloc 将布尔值和指针初始化为 0/NULL，便于错误路径清理。 */
     publisher = calloc(1, sizeof(*publisher));
     if (publisher == NULL)
     {
-        library_release();
+        mqtt_library_release();
         return NULL;
     }
 
@@ -274,7 +238,7 @@ DESTROY_MUTEX:
     pthread_mutex_destroy(&publisher->mutex);
 FREE_PUBLISHER:
     free(publisher);
-    library_release();
+    mqtt_library_release();
     return NULL;
 }
 
@@ -571,5 +535,5 @@ void mqtt_publisher_destroy(mqtt_publisher_t *publisher)
     pthread_mutex_destroy(&publisher->publish_mutex);
     pthread_mutex_destroy(&publisher->mutex);
     free(publisher);
-    library_release();
+    mqtt_library_release();
 }
