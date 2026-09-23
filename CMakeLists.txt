@@ -373,6 +373,10 @@ target_link_libraries(edgevision_core PRIVATE
     edgevision_domain
     edgevision_source
 )
+
+target_compile_definitions(edgevision_core PRIVATE
+    EDGEVISION_VERSION="${PROJECT_VERSION}"
+)
 edgevision_enable_warnings(edgevision_core)
 
 if(EDGEVISION_ENABLE_STORAGE AND EDGEVISION_ENABLE_MQTT)

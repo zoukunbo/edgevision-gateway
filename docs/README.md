@@ -8,8 +8,8 @@
 第一次了解项目：
 
 1. [项目 README](../README.md)：项目能力、代码结构、构建方式和当前边界。
-2. [W06 严格审计与后续计划](week06-d36-d42-audit-and-next-plan-2026-09-02.md)：
-   当前任务状态和下一阶段优先级，优先级高于早期进度记录。
+2. [D49 命令控制中心](d49-command-control-center.md)：理解本地与远程命令如何复用同一
+   执行路径，以及版本、配置、暂停和存储查询的责任边界。
 3. [Modbus、SQLite 与 Outbox 初学者教程](modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md)：
    从真实设备到可靠 MQTT 的完整数据链路。
 4. 再从下方主题索引选择协议、串口、网络、存储或部署文档。
@@ -20,19 +20,21 @@
 
 ## 当前统一口径
 
-截至 2026-09-02，以下表述作为文档间出现冲突时的解释基线：
+截至 2026-09-23，以下表述作为文档间出现冲突时的解释基线：
 
 - 真实 DHT11 → STM32 → RS485 → OK1126B → Modbus 04 → Measurement → MQTT 的
   最小链路曾经跑通并留有证据。
 - SQLite/Outbox 示例已验证原子提交/回滚、pending 跨进程、发布未确认时保留以及
   QoS 1 PUBACK 后标记 sent。
-- 默认 `gateway` 仍使用模拟数据源；真实 Modbus 查询仍在独立示例中。
-- SQLite/Outbox 位于 `examples/storage/`，尚未成为 `edgevision_core` 的正式模块；
-  WAL、常驻 worker、并发领取和完整重试策略尚未实现。
-- 当前板端 systemd 部署运行的是一次处理一条记录的 Outbox `oneshot` 示例，不是
-  集成真实采集、存储和补发的常驻 Gateway。
+- 启用 Storage 后，Gateway 可以选择模拟源或 STM32 Modbus 源；同时启用 Storage 与
+  MQTT 后，正式主链使用独立 worker 完成采集、SQLite/Outbox 落盘、发布和结果回写。
+- 本地 Unix socket 与远程 MQTT 已形成统一命令控制中心。D45～D48 的最小功能验收已
+  完成；D49 的 `get_version` 由学习者独立完成并通过两个入口验证。
+- 正式板端发布骨架位于 `deploy/edge-gateway-lite/`；旧的 Outbox `oneshot` 部署只作为
+  历史教学示例保留。
 - 当前只具备 at-least-once 方向；PUBACK 后、数据库更新前崩溃仍可能重复发布。
-- D36～D42 有多项最小行为已经验证，但按原始 DoD 均为“进行中、严格验收未通过”。
+- D50 已开始只读梳理 Buildroot、系统启动链与可恢复部署基线；尚未据此修改镜像、
+  DTB、启动配置或板端 systemd 服务。
 
 带日期文档中的测试数量、路径、运行状态和“完成”描述是当时证据，不应自动外推为
 今天的工程状态。当前构建结果以最新实际运行和根 README 为准。
@@ -55,6 +57,7 @@
 | [D29 目标板证据](d29-ok1126b-board-evidence.md) | 历史证据 | OK1126B-S 网络、压力和优雅退出记录 |
 | [NetworkClient 复习与面试手册](d30-network-client-review-interview.md) | 长期指南 | 非阻塞连接、退避、心跳和停止语义 |
 | [epoll 事件循环笔记](epoll-event-loop-notes.md) | 学习笔记 | 监听 FD、就绪数组和非阻塞处理模型 |
+| [D49 命令控制中心](d49-command-control-center.md) | 当前教程 | 本地/MQTT 双入口、共享 handler、去重、版本查询与使用方法 |
 
 ### RS485、Modbus 与真实设备
 

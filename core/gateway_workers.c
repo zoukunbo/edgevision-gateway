@@ -40,6 +40,10 @@
 #define GATEWAY_COMMAND_DEDUP_CAPACITY 16u
 #define GATEWAY_COMMAND_REQUEST_ID_CAPACITY 64u
 
+#ifndef EDGEVISION_VERSION
+#define EDGEVISION_VERSION "development"
+#endif
+
 /* storage worker 交给 MQTT worker 的待投递任务。 */
 typedef struct
 {
@@ -54,16 +58,26 @@ typedef struct
     int64_t sent_at_ms;
 } gateway_delivery_report_t;
 
+typedef enum
+{
+    GATEWAY_STORAGE_CONTROL_SET_INTERVAL,
+    GATEWAY_STORAGE_CONTROL_GET_STATS
+}gateway_storage_control_kind_t;
+
 typedef struct
 {
+    gateway_storage_control_kind_t kind;
     int interval_ms;
-}gateway_config_request_t;
+} gateway_storage_control_request_t;
 
-typedef struct 
+typedef struct
 {
-    int interval_ms;
+    gateway_storage_control_kind_t kind;
     outbox_store_result_t storage_result;
-}gateway_config_result_t;
+    int interval_ms;
+    outbox_store_stats_t stats;
+} gateway_storage_control_result_t;
+
 
 typedef struct
 {
@@ -80,15 +94,30 @@ typedef struct
 /*
  * 最近处理过的远程请求。
  *
- * QoS 1 可能重复投递同一请求。保存 request_id 和已经生成的响应，
- * 重复请求到达时不再执行命令，而是重新发布原响应。
+ * QoS 1 可能重复投递同一请求。缓存 request_id、原命令和已经生成的响应：
+ * 同一 ID、同一命令只重发原响应；同一 ID、不同命令视为 ID 冲突。
+ * 记录只在当前进程内有效，写满后按插入顺序覆盖，不提供重启后去重。
  */
 typedef struct
 {
     bool occupied;
     char request_id[GATEWAY_COMMAND_REQUEST_ID_CAPACITY];
+    char command[GATEWAY_MQTT_COMMAND_PAYLOAD_CAPACITY];
     char response[GATEWAY_COMMAND_RESPONSE_CAPACITY];
 } gateway_command_dedup_entry_t;
+
+typedef enum
+{
+    /* 内部参数或查询过程无效，调用者不能继续执行命令。 */
+    GATEWAY_COMMAND_DEDUP_ERROR = -1,
+    /* 没有找到 request_id，调用者可以执行并缓存新命令。 */
+    GATEWAY_COMMAND_DEDUP_MISS = 0,
+    /* request_id 和 command 都相同，response_out 指向原响应。 */
+    GATEWAY_COMMAND_DEDUP_MATCH = 1,
+    /* request_id 相同但 command 不同，调用者应拒绝执行。 */
+    GATEWAY_COMMAND_DEDUP_CONFLICT = 2
+} gateway_command_dedup_result_t;
+
 /*
  * 三个 worker 共享的运行上下文。
  *
@@ -111,8 +140,8 @@ typedef struct
     bounded_queue_t measurement_queue;
     bounded_queue_t delivery_queue;
     bounded_queue_t result_queue;
-    bounded_queue_t config_request_queue;
-    bounded_queue_t config_result_queue;
+    bounded_queue_t storage_control_request_queue;
+    bounded_queue_t storage_control_result_queue;
     bounded_queue_t mqtt_command_queue;
 
     pthread_mutex_t status_mutex;
@@ -128,16 +157,29 @@ typedef struct
 
     /* 下次写入的缓存位置；写满后从头覆盖最旧记录。 */
     size_t command_dedup_next;
+
+    bool collection_paused;
 } gateway_workers_t;
 
-static const char *gateway_find_cached_command_response(
+/*
+ * MATCH 时 response_out 借用缓存槽位中的字符串，不需要调用者释放；
+ * 该指针只在对应槽位被环形缓存覆盖前有效。其他结果保持为 NULL。
+ */
+static gateway_command_dedup_result_t
+gateway_find_cached_command_response(
     const gateway_workers_t *workers,
-    const char *request_id)
+    const char *request_id,
+    const char *command,
+    const char **response_out)
 {
-    if (workers == NULL || request_id == NULL)
+    if (workers == NULL ||
+        request_id == NULL ||
+        command == NULL ||
+        response_out == NULL)
     {
-        return NULL;
+        return GATEWAY_COMMAND_DEDUP_ERROR;
     }
+    *response_out = NULL;
 
     for (size_t index = 0;
      index < GATEWAY_COMMAND_DEDUP_CAPACITY;
@@ -149,23 +191,35 @@ static const char *gateway_find_cached_command_response(
         /* 在这里判断 occupied 和 request_id */
         if (entry->occupied && strcmp(entry->request_id, request_id) == 0)
         {
-            return entry->response;
+            if (strcmp(entry->command, command) == 0)
+            {
+                *response_out = entry->response;
+                return GATEWAY_COMMAND_DEDUP_MATCH;
+            }
+            return GATEWAY_COMMAND_DEDUP_CONFLICT;
         }
-        
+
     }
-    return NULL;
+    return GATEWAY_COMMAND_DEDUP_MISS;
 }
 
+/*
+ * 先验证三个字符串都能完整放入槽位，再一次性写入当前槽位。
+ * 保存成功后才推进 command_dedup_next，失败不会占用缓存位置。
+ */
 static bool gateway_cache_command_response(
     gateway_workers_t *workers,
     const char *request_id,
+    const char *command,
     const char *response)
 {
     if (workers == NULL ||
         request_id == NULL ||
         response == NULL ||
+        command == NULL ||
         request_id[0] == '\0' ||
-        response[0] == '\0'
+        response[0] == '\0' ||
+        command[0] == '\0'
     )
     {
         return false;
@@ -177,18 +231,22 @@ static bool gateway_cache_command_response(
     // 返回值等于容量，表示在可容纳范围内没有找到结尾。
     size_t request_id_length =
     strnlen(request_id, sizeof(entry->request_id));
+    size_t command_length =
+    strnlen(command, sizeof(entry->command));
 
     size_t response_length =
         strnlen(response, sizeof(entry->response));
 
     if (request_id_length == sizeof(entry->request_id) ||
-        response_length == sizeof(entry->response))
+        response_length == sizeof(entry->response)||
+        command_length == sizeof(entry->command))
     {
         return false;
     }
 
      // length + 1 会把字符串结尾的 '\0' 一起复制。
     memcpy(entry->request_id, request_id, request_id_length + 1);
+    memcpy(entry->command, command, command_length + 1);
     memcpy(entry->response, response, response_length + 1);
 
     entry->occupied = true;
@@ -206,7 +264,7 @@ static void gateway_mqtt_command_received(
     const void *payload,
     size_t payload_length)
 {
-    if (context == NULL || 
+    if (context == NULL ||
         topic == NULL ||
         (payload_length > 0 && payload == NULL))
     {
@@ -221,7 +279,7 @@ static void gateway_mqtt_command_received(
     {
         return;
     }
-    
+
     memcpy(request.topic, topic, topic_length);
     request.topic[topic_length] = '\0';
 
@@ -229,7 +287,7 @@ static void gateway_mqtt_command_received(
     {
         memcpy(request.payload, payload, payload_length);
     }
-    
+
     request.payload[payload_length] = '\0';
     request.payload_length = payload_length;
 
@@ -240,6 +298,7 @@ typedef struct
 {
     int interval_ms;
     uint64_t collected_count;
+    bool collection_paused;
 } gateway_status_snapshot_t;
 
 /* 在同一个锁保护期内复制状态，避免 command worker 读到不一致数据。 */
@@ -259,6 +318,7 @@ static int gateway_workers_get_status(
 
     snapshot->interval_ms = workers->interval_ms;
     snapshot->collected_count = workers->collected_count;
+    snapshot->collection_paused = workers->collection_paused;
 
     if (pthread_mutex_unlock(&workers->status_mutex) != 0)
     {
@@ -274,12 +334,12 @@ static int gateway_workers_set_interval(gateway_workers_t *workers, int requeste
     {
         return -1;
     }
-    
+
     if (requested_ms < 100 || requested_ms > 60000)
     {
         return 1;
     }
-    
+
 
     if (pthread_mutex_lock(&workers->status_mutex) != 0)
         return -1;
@@ -327,6 +387,18 @@ static bool gateway_workers_should_stop(gateway_workers_t *workers)
     return requested != 0 || graceful_shutdown_requested();
 }
 
+static int gateway_workers_set_collection_paused(
+    gateway_workers_t *workers,
+    bool paused)
+{
+    if (pthread_mutex_lock(&workers->status_mutex) != 0)
+        return -1;
+    workers->collection_paused = paused;
+    if (pthread_mutex_unlock(&workers->status_mutex))
+        return -1;
+    return 0;
+}
+
 static int gateway_handle_command(
     gateway_workers_t *workers,
     const char *command,
@@ -352,9 +424,11 @@ static int gateway_handle_command(
         /* snprintf 返回完整输出所需字符数，不含结尾 '\0'。 */
         n = snprintf(reply,
                      reply_size,
-                     "interval_ms=%d collected_count=%" PRIu64,
+                     "interval_ms=%d collected_count=%" PRIu64
+                     " collection=%s",
                      snapshot.interval_ms,
-                     snapshot.collected_count);
+                     snapshot.collected_count,
+                    snapshot.collection_paused ? "paused" : "running");
     }
     else if (strcmp(command, "set_interval") == 0 ||
              strncmp(command, "set_interval ", 13) == 0)
@@ -368,9 +442,11 @@ static int gateway_handle_command(
         }
         else
         {
-            gateway_config_request_t request_item = {.interval_ms = requested_ms};
-            bq_result_t requested_result = bq_push(&workers->config_request_queue, 
-                &request_item, 
+            gateway_storage_control_request_t request_item ={
+                .interval_ms = requested_ms,
+                .kind = GATEWAY_STORAGE_CONTROL_SET_INTERVAL};
+            bq_result_t requested_result = bq_push(&workers->storage_control_request_queue,
+                &request_item,
                 GATEWAY_QUEUE_POLL_MS);
 
             if (requested_result != BQ_OK)
@@ -378,18 +454,113 @@ static int gateway_handle_command(
                 return -1;
             }
 
-            gateway_config_result_t config_result = {0};
+            gateway_storage_control_result_t control_result = {0};
 
             while (1)
             {
-                bq_result_t queue_result = 
-                    bq_pop(&workers->config_result_queue,
-                    &config_result,
+                bq_result_t queue_result =
+                    bq_pop(&workers->storage_control_result_queue,
+                    &control_result,
                     GATEWAY_QUEUE_POLL_MS);
-                
+
                 if (queue_result == BQ_OK)
                     break;
-                
+
+                if (queue_result != BQ_TIMEOUT)
+                {
+                    return -1;
+                }
+
+                if (gateway_workers_should_stop(workers))
+                {
+                    return -1;
+                }
+            }
+            if (control_result.kind != GATEWAY_STORAGE_CONTROL_SET_INTERVAL)
+            {
+                return -1;
+            }
+
+
+            if (control_result.storage_result != OUTBOX_STORE_OK)
+            {
+                n = snprintf(reply, reply_size, "error=persist_failed");
+            }
+            else
+            {
+                if (control_result.kind == GATEWAY_STORAGE_CONTROL_SET_INTERVAL)
+                {
+                    int rc = gateway_workers_set_interval(
+                        workers, control_result.interval_ms);
+
+                    if (rc != 0)
+                        return -1;
+
+                    n = snprintf(reply, reply_size,
+                                "ok interval_ms=%d",
+                                control_result.interval_ms);
+                }
+            }
+        }
+    }
+    else if (strcmp(command, "get_config") == 0)
+    {
+        gateway_status_snapshot_t snapshot = {0};
+
+        if (gateway_workers_get_status(workers, &snapshot) != 0)
+        {
+            return -1;
+        }
+
+        n = snprintf(reply, reply_size,
+                            "interval_ms=%d",
+                            snapshot.interval_ms);
+    }
+    else if (strcmp(command, "pause_collection") == 0 ||
+            strcmp(command, "resume_collection") == 0)
+    {
+        bool collection = false;
+        if (strcmp(command, "pause_collection") == 0)
+        {
+            collection = true;
+        }
+
+        if (gateway_workers_set_collection_paused(workers, collection) != 0)
+        {
+            return -1;
+        }
+
+        n = snprintf(reply, reply_size,
+                            "ok collection=%s",
+                            collection ? "paused" : "running");
+    }
+    else if (strcmp(command, "get_storage_stats") == 0)
+    {
+        {
+            gateway_storage_control_request_t request_item ={
+                .kind = GATEWAY_STORAGE_CONTROL_GET_STATS};
+            bq_result_t requested_result = bq_push(
+                &workers->storage_control_request_queue,
+                &request_item,
+                GATEWAY_QUEUE_POLL_MS);
+
+            if (requested_result != BQ_OK)
+            {
+                return -1;
+            }
+
+            gateway_storage_control_result_t control_result = {0};
+
+            while (1)
+            {
+                bq_result_t queue_result =
+                    bq_pop(&workers->storage_control_result_queue,
+                    &control_result,
+                    GATEWAY_QUEUE_POLL_MS);
+
+                if (queue_result == BQ_OK)
+                    break;
+
                 if (queue_result != BQ_TIMEOUT)
                 {
                     return -1;
@@ -401,25 +572,36 @@ static int gateway_handle_command(
                 }
             }
 
-            if (config_result.storage_result != OUTBOX_STORE_OK)
+            if (control_result.kind != GATEWAY_STORAGE_CONTROL_GET_STATS)
+                return -1;
+
+            if (control_result.storage_result != OUTBOX_STORE_OK)
             {
-                n = snprintf(reply, reply_size, "error=persist_failed");
+                n = snprintf(reply, reply_size, "error=stats_failed");
             }
             else
             {
-                int rc = gateway_workers_set_interval(
-                    workers, config_result.interval_ms);
-
-                if (rc != 0)
-                    return -1;
-
-                n = snprintf(reply, reply_size,
-                            "ok interval_ms=%d",
-                            config_result.interval_ms);
+                if (control_result.kind == GATEWAY_STORAGE_CONTROL_GET_STATS)
+                {
+                     n = snprintf(reply,
+                        reply_size,
+                        "measurements=%"PRIu64
+                                " pending=%"PRIu64
+                                " sent=%"PRIu64,
+                                 control_result.stats.measurement_total,
+                                control_result.stats.pending_count,
+                                control_result.stats.sent_count);
+                }
             }
         }
     }
-
+    else if (strcmp(command, "get_version") == 0)
+    {
+        n = snprintf(reply,
+                        reply_size,
+                        "ok version=%s",
+                        EDGEVISION_VERSION);
+    }
     else
     {
         n = snprintf(reply, reply_size, "error=unknown_command");
@@ -745,7 +927,7 @@ static int gateway_worker_sleep(gateway_workers_t *workers, int total_ms)
         {
             chunk_ms = GATEWAY_QUEUE_POLL_MS;
         }
-        
+
         struct timespec remaining = {
             .tv_sec = 0,
             .tv_nsec = chunk_ms * 1000000L
@@ -786,6 +968,24 @@ static void *gateway_source_worker(void *argument)
     while (!gateway_workers_should_stop(workers))
     {
         measurement_t measurement = {0};
+
+        gateway_status_snapshot_t snapshot = {0};
+
+        if (gateway_workers_get_status(workers, &snapshot) != 0)
+        {
+            gateway_worker_fail(workers, "gateway workers get status failed");
+            break;
+        }
+
+        if (snapshot.collection_paused)
+        {
+            if (gateway_worker_sleep(workers, GATEWAY_QUEUE_POLL_MS) != 0)
+            {
+                gateway_worker_fail(workers, "source worker sleep failed");
+                break;
+            }
+            continue;
+        }
         measurement_source_result_t source_result =
             measurement_source_next(workers->source, &measurement);
 
@@ -832,7 +1032,6 @@ static void *gateway_source_worker(void *argument)
                 return NULL;
         }
 
-        gateway_status_snapshot_t snapshot = {0};
 
         if (gateway_workers_get_status(workers, &snapshot) != 0)
         {
@@ -956,18 +1155,32 @@ static void *gateway_storage_worker(void *argument)
      */
     while (!measurement_closed || !result_closed)
     {
-        gateway_config_request_t request = {0};
+        gateway_storage_control_request_t request = {0};
 
-        bq_result_t queue_result = bq_pop(&workers->config_request_queue, &request, 0);
+        bq_result_t queue_result = bq_pop(&workers->storage_control_request_queue, &request, 0);
 
         if (queue_result == BQ_OK)
         {
-            gateway_config_result_t config_result = {
-                .interval_ms = request.interval_ms,
-                .storage_result = outbox_store_save_interval(workers->store, request.interval_ms)
-            };
+            gateway_storage_control_result_t control_result = {0};
+            if (request.kind == GATEWAY_STORAGE_CONTROL_SET_INTERVAL)
+            {
+                control_result.kind = GATEWAY_STORAGE_CONTROL_SET_INTERVAL;
+                control_result.interval_ms = request.interval_ms;
+                control_result.storage_result = outbox_store_save_interval(workers->store, request.interval_ms);
+            }
+            else if (request.kind == GATEWAY_STORAGE_CONTROL_GET_STATS)
+            {
+                control_result.kind = GATEWAY_STORAGE_CONTROL_GET_STATS;
+                control_result.storage_result = outbox_store_get_stats(workers->store, &control_result.stats);
+            }
+            else
+            {
+                gateway_worker_fail(workers, "config result kind unknowed");
+                return NULL;
+            }
 
-            queue_result = bq_push(&workers->config_result_queue, &config_result, 0);
+
+            queue_result = bq_push(&workers->storage_control_result_queue, &control_result, 0);
 
             if (queue_result != BQ_OK)
             {
@@ -981,7 +1194,7 @@ static void *gateway_storage_worker(void *argument)
                 workers, "storage config request pop failed");
             return NULL;
         }
-        
+
         gateway_delivery_report_t report = {0};
         bq_result_t result_queue_result =
             bq_pop(&workers->result_queue, &report, 0);
@@ -1116,11 +1329,11 @@ static char *gateway_create_command_response(
     const char *detail_value)
 {
     if (request_id == NULL ||
-        request_id[0] == '\0'|| 
-        status == NULL || 
-        status[0] == '\0'|| 
+        request_id[0] == '\0'||
+        status == NULL ||
+        status[0] == '\0'||
         detail_name == NULL ||
-        detail_name[0] == '\0'|| 
+        detail_name[0] == '\0'||
         detail_value == NULL ||
         detail_value[0] == '\0')
     {
@@ -1133,7 +1346,7 @@ static char *gateway_create_command_response(
     {
         return NULL;
     }
-    
+
     if (cJSON_AddStringToObject(
         root, "request_id", request_id) == NULL ||
         cJSON_AddStringToObject(
@@ -1178,11 +1391,11 @@ static void *gateway_mqtt_command_worker(void *argument)
 
     while (1)
     {
-        bq_result_t queue_result = 
+        bq_result_t queue_result =
         bq_pop(&workers->mqtt_command_queue,
             &request,
             GATEWAY_QUEUE_POLL_MS);
-        if (queue_result == BQ_OK) 
+        if (queue_result == BQ_OK)
         {
             cJSON *root = cJSON_ParseWithLength(request.payload, request.payload_length);
             if (root == NULL)
@@ -1190,7 +1403,7 @@ static void *gateway_mqtt_command_worker(void *argument)
                 fprintf(stderr, "invalid remote command JSON\n");
                 continue;
             }
-            
+
             const cJSON *request_id_item =
                 cJSON_GetObjectItemCaseSensitive(root, "request_id");
 
@@ -1206,9 +1419,9 @@ static void *gateway_mqtt_command_worker(void *argument)
                 continue;
             }
 
-            const cJSON *command_item = 
+            const cJSON *command_item =
                 cJSON_GetObjectItemCaseSensitive(root, "command");
-            
+
             const char *command_error = NULL;
 
             if (!cJSON_IsString(command_item) ||
@@ -1222,15 +1435,18 @@ static void *gateway_mqtt_command_worker(void *argument)
                 bool command_supported =
                 strcmp(command_item->valuestring, "status") == 0 ||
                 strcmp(command_item->valuestring, "set_interval") == 0 ||
-                strncmp(command_item->valuestring,
-                        "set_interval ",
-                        13) == 0;
+                strncmp(command_item->valuestring,"set_interval ",13) == 0 ||
+                strcmp(command_item->valuestring, "get_config") == 0 ||
+                strcmp(command_item->valuestring, "pause_collection") == 0 ||
+                strcmp(command_item->valuestring, "resume_collection") == 0 ||
+                strcmp(command_item->valuestring, "get_storage_stats") == 0 ||
+                strcmp(command_item->valuestring, "get_version") == 0;
 
                 if (!command_supported)
                     command_error = "unsupported_command";
             }
 
-            
+
 
             if (command_error != NULL)
             {
@@ -1247,7 +1463,7 @@ static void *gateway_mqtt_command_worker(void *argument)
                     gateway_worker_fail(
                         workers,
                         "remote error response creation failed");
-                    break;  
+                    break;
                 }
 
                 mqtt_publisher_result_t publish_result =
@@ -1257,41 +1473,90 @@ static void *gateway_mqtt_command_worker(void *argument)
 
                 cJSON_free(error_payload);
 
-                if (publish_result != MQTT_PUBLISHER_OK) 
+                if (publish_result != MQTT_PUBLISHER_OK)
                 {
                     fprintf(stderr,
                     "remote error response publish failed: %d\n",
                     (int)publish_result);
                 }
-                
+
                 cJSON_Delete(root);
                 continue;
             }
 
-            const char *cached_response = 
-                gateway_find_cached_command_response(workers, request_id_item->valuestring);
+            const char *cache_response  = NULL;
+            gateway_command_dedup_result_t command_dedup_result =
+                gateway_find_cached_command_response(
+                     workers,
+                     request_id_item->valuestring,
+                     command_item->valuestring,
+                    &cache_response );
 
-            if (cached_response != NULL)
+            if (command_dedup_result != GATEWAY_COMMAND_DEDUP_MISS)
             {
-                printf("duplicate remote request_id: %s\n",
+                if (command_dedup_result == GATEWAY_COMMAND_DEDUP_MATCH)
+                {
+                    printf("duplicate remote request_id: %s\n",
                     request_id_item->valuestring);
 
-                mqtt_publisher_result_t publish_result =
-                    gateway_publish_command_response(
-                        workers,
-                        cached_response);
+                    mqtt_publisher_result_t publish_result =
+                        gateway_publish_command_response(
+                            workers,
+                            cache_response);
 
-                if (publish_result != MQTT_PUBLISHER_OK)
-                {
-                    fprintf(stderr,
-                            "cached remote response publish failed: %d\n",
-                            (int)publish_result);
+                    if (publish_result != MQTT_PUBLISHER_OK)
+                    {
+                        fprintf(stderr,
+                                "cached remote response publish failed: %d\n",
+                                (int)publish_result);
+                    }
+                    cJSON_Delete(root);
+                    continue;
                 }
+                else if (command_dedup_result == GATEWAY_COMMAND_DEDUP_CONFLICT)
+                {
+                    /* 冲突请求不得执行，也不能覆盖最初请求保存的响应。 */
+                    char *response_payload =
+                        gateway_create_command_response(
+                            request_id_item->valuestring,
+                            "error",
+                            "error",
+                            "request_id_conflict");
+                    if (response_payload == NULL)
+                    {
+                        cJSON_Delete(root);
+                        gateway_worker_fail(
+                            workers,
+                            "remote response JSON creation failed");
+                        break;
+                    }
 
-                cJSON_Delete(root);
-                continue;
+                    mqtt_publisher_result_t publish_result =
+                            gateway_publish_command_response(
+                                workers,
+                                response_payload);
+
+                    if (publish_result != MQTT_PUBLISHER_OK)
+                    {
+                        fprintf(stderr,
+                                "remote response publish failed: %d\n",
+                                (int)publish_result);
+                    }
+                    cJSON_free(response_payload);
+
+                    cJSON_Delete(root);
+                    continue;
+                }
+                else
+                {
+                    cJSON_Delete(root);
+                    gateway_worker_fail(
+                    workers,
+                    "gateway find cached command response failed");
+                    break;
+                }
             }
-            
+
 
             printf("remote request_id: %s\n",
                 request_id_item->valuestring);
@@ -1324,9 +1589,9 @@ static void *gateway_mqtt_command_worker(void *argument)
                 detail_value = reply + 6;
             }
 
-            char *response_payload = 
+            char *response_payload =
                 gateway_create_command_response(
-                    request_id_item->valuestring, 
+                    request_id_item->valuestring,
                     response_status,
                     detail_name,
                     detail_value);
@@ -1342,6 +1607,7 @@ static void *gateway_mqtt_command_worker(void *argument)
             if (!gateway_cache_command_response(
                     workers,
                     request_id_item->valuestring,
+                    command_item->valuestring,
                     response_payload))
             {
                 cJSON_free(response_payload);
@@ -1365,7 +1631,7 @@ static void *gateway_mqtt_command_worker(void *argument)
                         (int)publish_result);
             }
             cJSON_free(response_payload);
-            
+
             cJSON_Delete(root);
             continue;
         }
@@ -1497,8 +1763,8 @@ int gateway_workers_run(outbox_store_t *store,
                         mqtt_publisher_t *publisher,
                         const gateway_workers_config_t *config)
 {
-    if (store == NULL || 
-        source == NULL || 
+    if (store == NULL ||
+        source == NULL ||
         publisher == NULL ||
         config == NULL ||
         config->mqtt_host == NULL ||
@@ -1537,8 +1803,8 @@ int gateway_workers_run(outbox_store_t *store,
     bool storage_started = false;
     bool mqtt_started = false;
     bool command_started = false;
-    bool config_request_ready = false;
-    bool config_result_ready = false;
+    bool storage_control_request_ready = false;
+    bool storage_control_result_ready = false;
     bool mqtt_command_ready = false;
     bool command_receiver_ready = false;
     bool mqtt_command_started = false;
@@ -1554,7 +1820,7 @@ int gateway_workers_run(outbox_store_t *store,
         goto CLEANUP;
     }
     command_mutex_ready = true;
-    
+
 
     if (bq_init(&workers.measurement_queue,
                 GATEWAY_MEASUREMENT_QUEUE_CAPACITY,
@@ -1574,18 +1840,18 @@ int gateway_workers_run(outbox_store_t *store,
         goto CLEANUP;
     result_ready = true;
 
-    if (bq_init(&workers.config_request_queue, 
-        1, 
-        sizeof(gateway_config_request_t)) != BQ_OK)
+    if (bq_init(&workers.storage_control_request_queue,
+        1,
+        sizeof(gateway_storage_control_request_t)) != BQ_OK)
         goto CLEANUP;
-    config_request_ready = true;
-    
+    storage_control_request_ready = true;
 
-    if (bq_init(&workers.config_result_queue, 
-        1, 
-        sizeof(gateway_config_result_t)) != BQ_OK)
+
+    if (bq_init(&workers.storage_control_result_queue,
+        1,
+        sizeof(gateway_storage_control_result_t)) != BQ_OK)
         goto CLEANUP;
-    config_result_ready = true;
+    storage_control_result_ready = true;
 
     if (bq_init(&workers.mqtt_command_queue,
             GATEWAY_MQTT_COMMAND_QUEUE_CAPACITY,
@@ -1595,7 +1861,7 @@ int gateway_workers_run(outbox_store_t *store,
     }
     mqtt_command_ready = true;
 
-    const mqtt_command_receiver_config_t receiver_config = 
+    const mqtt_command_receiver_config_t receiver_config =
     {
         .host = config->mqtt_host,
         .port = config->mqtt_port,
@@ -1613,7 +1879,7 @@ int gateway_workers_run(outbox_store_t *store,
         goto CLEANUP;
     }
     command_receiver_ready = true;
-    
+
     /*
      * 先启动下游再启动上游，确保 source 开始产出时整条流水线已可消费。
      */
@@ -1640,7 +1906,7 @@ int gateway_workers_run(outbox_store_t *store,
         goto STOP;
     }
 
-    
+
 
     if (pthread_create(&mqtt_thread,
                        NULL,
@@ -1698,10 +1964,10 @@ STOP:
     if (command_started &&
         gateway_join_thread(command_thread, &workers) != 0)
         result = -1;
-    
-    if (config_request_ready)
-        (void)bq_close(&workers.config_request_queue);
-    
+
+    if (storage_control_request_ready)
+        (void)bq_close(&workers.storage_control_request_queue);
+
     if (command_receiver_ready)
     {
         mqtt_command_receiver_destroy(
@@ -1736,8 +2002,8 @@ STOP:
         gateway_join_thread(storage_thread, &workers) != 0)
         result = -1;
 
-    if (config_result_ready)
-        (void)bq_close(&workers.config_result_queue);
+    if (storage_control_result_ready)
+        (void)bq_close(&workers.storage_control_result_queue);
 
     if (gateway_workers_failed(&workers))
         result = -1;
@@ -1747,7 +2013,7 @@ CLEANUP:
     {
         mqtt_command_receiver_destroy(workers.command_receiver);
     }
-    
+
 
     if (mqtt_command_ready &&
         bq_destroy(&workers.mqtt_command_queue) != BQ_OK)
@@ -1755,15 +2021,15 @@ CLEANUP:
         result = -1;
     }
 
-    if (config_result_ready && 
-        bq_destroy(&workers.config_result_queue) != BQ_OK)
+    if (storage_control_result_ready &&
+        bq_destroy(&workers.storage_control_result_queue) != BQ_OK)
         result = -1;
 
 
-    if (config_request_ready &&
-        bq_destroy(&workers.config_request_queue) != BQ_OK)
+    if (storage_control_request_ready &&
+        bq_destroy(&workers.storage_control_request_queue) != BQ_OK)
         result = -1;
-    
+
 
     if (delivery_ready)
         gateway_drain_delivery_queue(&workers);

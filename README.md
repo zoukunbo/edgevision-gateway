@@ -6,7 +6,8 @@ EdgeVision Gateway 是一个面向嵌入式 Linux 的 C11 边缘数据网关学�
 
 当前仓库同时包含“可复用模块”“Gateway 主程序”和“阶段性独立示例”。启用 Storage
 后可选择模拟源或 STM32/DHT11 Modbus RTU 数据源；同时启用 Storage 与 MQTT 后，正式
-服务使用 Source、Storage、MQTT 三个数据 worker 和一个本地命令 worker，
+服务使用 Source、Storage、MQTT 三个数据 worker，以及本地命令和远程 MQTT 命令
+worker，
 三条有界队列串联 SQLite WAL/Outbox、MQTT QoS 1/PUBACK 和持久化
 `message_id`。项目已完成 102 条真实板端断网恢复验收；它仍是教学型 v0.1，不应直接
 视为完整生产网关。
@@ -50,7 +51,7 @@ STM32/DHT11 -- RS485 -- Modbus RTU 04 -- 寄存器映射 -> Measurement V1
 
 Gateway Core 负责编排正式主链的日志、信号、数据源、协议和网络生命周期；
 正式服务使用 Source、Storage、MQTT 三个数据 worker 解耦采集、落盘和
-网络确认，command worker 通过本地 Unix socket 提供运行状态查询。
+网络确认。本地 Unix socket 与远程 MQTT 命令入口最终复用同一个命令处理函数。
 ```
 
 项目目前验证了以下能力：
@@ -66,7 +67,8 @@ Gateway Core 负责编排正式主链的日志、信号、数据源、协议和�
 - 可选 libmosquitto MQTT QoS 1 发布、PUBACK 等待与有限重连。
 - SQLite Measurement 持久化、Measurement/Outbox 原子提交及确认后标记 `sent`。
 - CMake/CTest 单元、集成、异常路径、退出、冒烟和压力测试。
-- 本地 Unix socket 命令通道，可用 `gatewayctl status` 查询采集周期和累计采集数。
+- 本地 Unix socket 与远程 MQTT 命令通道，共用参数校验和业务执行逻辑；支持状态、
+  配置、暂停/恢复采集、存储统计及版本查询。
 
 ## 当前边界
 
@@ -245,9 +247,25 @@ cmake --build build-service --parallel
 ./build-service/gatewayctl status
 ```
 
-客户端通过 `/tmp/edgevision-study.sock` 发送以换行结尾的命令。当前支持
-`status`，返回 `interval_ms` 和 `collected_count`；未知命令返回
-`error=unknown_command`。该命令 worker 只在 Storage 和 MQTT 同时启用的服务中运行。
+客户端通过 `/tmp/edgevision-study.sock` 发送以换行结尾的命令。当前支持：
+
+```text
+status
+set_interval <100..60000>
+get_config
+pause_collection
+resume_collection
+get_storage_stats
+get_version
+```
+
+未知命令返回 `error=unknown_command`。远程控制端可以向
+`edgevision/v1/devices/gateway-01/commands/request` 发布带 `request_id` 的 JSON 请求，
+并从对应的 `commands/response` 主题接收结果。本地与远程入口最终都调用
+`gateway_execute_command()` 和 `gateway_handle_command()`；远程入口另外负责 JSON
+校验、请求去重及响应包装。命令 worker 只在 Storage 和 MQTT 同时启用的服务中运行。
+完整设计、使用示例和复习题见
+[D49 命令控制中心](docs/d49-command-control-center.md)。
 
 若只想在本机验证持久化链路，可启用 Storage 并使用默认模拟源：
 
@@ -338,6 +356,7 @@ MAGIC(0xA5 0x5A) + LEN(1 byte) + PAYLOAD + CRC16(2 bytes)
 - [SQLite Outbox 初学者教程](docs/modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md)
 - [systemd + NFS 目标板部署指南](docs/systemd-nfs-board-deployment-2026-09-01.md)
 - [D40 正式链路实现复盘](docs/d40-stm32-modbus-outbox-gateway-implementation-2026-09-07.md)
+- [D49 本地与 MQTT 命令控制中心](docs/d49-command-control-center.md)
 - [可审计历史回放记录](docs/d42-auditable-replay-2026-09-01.md)
 - [D36-D42 审计与下一阶段计划](docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md)
 - [最新学习进度](docs/learning-progress-2026-08-31.md)
