@@ -10,9 +10,12 @@ install_dir=${EDGEVISION_INSTALL_DIR:-$state_dir/edge-gateway-lite}
 unit_dir=${EDGEVISION_UNIT_DIR:-/etc/systemd/system}
 backup_root=${EDGEVISION_BACKUP_ROOT:-$state_dir/upgrade-backup}
 state=PRECHECK
+finished=0
+recovering=0
 
 result_fail()
 {
+    finished=1
     printf '%s\n' "$1"
     exit 1
 }
@@ -27,17 +30,31 @@ runtime_version()
     printf '%s\n' "$version"
 }
 
+wait_for_version()
+{
+    expected_version=$1
+    attempts=${UPGRADE_READY_ATTEMPTS:-20}
+    delay=${UPGRADE_READY_DELAY:-1}
+    while [ "$attempts" -gt 0 ]; do
+        ready_version=$(runtime_version 2>/dev/null || true)
+        [ "$ready_version" = "$expected_version" ] && return 0
+        attempts=$((attempts - 1))
+        [ "$attempts" -eq 0 ] || sleep "$delay"
+    done
+    return 1
+}
+
 verify_old_after_backup_failure()
 {
     systemctl restart "$service" || result_fail rollback_failed
-    restored=$(runtime_version) || result_fail rollback_failed
-    [ "$restored" = "$running_version" ] || result_fail rollback_failed
+    wait_for_version "$running_version" || result_fail rollback_failed
     "$install_dir/scripts/health-check.sh" >/dev/null 2>&1 || result_fail rollback_failed
     result_fail backup_failed_old_restored
 }
 
 rollback_upgrade()
 {
+    recovering=1
     state=ROLLING_BACK
     systemctl stop "$service" >/dev/null 2>&1 || result_fail rollback_failed
     upgrade_restore_program || result_fail rollback_failed
@@ -45,19 +62,47 @@ rollback_upgrade()
     systemctl daemon-reload || result_fail rollback_failed
     systemctl enable "$service" || result_fail rollback_failed
     systemctl restart "$service" || result_fail rollback_failed
-    restored=$(runtime_version) || result_fail rollback_failed
-    [ "$restored" = "$running_version" ] || result_fail rollback_failed
+    wait_for_version "$running_version" || result_fail rollback_failed
     if "$install_dir/scripts/health-check.sh" >/dev/null 2>&1; then
+        upgrade_cleanup_quarantine || result_fail rollback_failed
         result_fail upgrade_failed_rollback_ok
     fi
     result_fail upgrade_failed_rollback_unhealthy
 }
 
+restart_old_without_backup()
+{
+    recovering=1
+    rm -rf -- "$backup_root/previous.new"
+    systemctl restart "$service" || result_fail rollback_failed
+    wait_for_version "$running_version" || result_fail rollback_failed
+    "$install_dir/scripts/health-check.sh" >/dev/null 2>&1 || result_fail rollback_failed
+    result_fail backup_failed_old_restored
+}
+
 on_signal()
 {
-    case "$state" in PRECHECK) result_fail precheck_failed ;; *) rollback_upgrade ;; esac
+    trap - HUP INT TERM
+    case "$state" in
+        PRECHECK) result_fail precheck_failed ;;
+        OLD_STOPPED|BACKING_UP) restart_old_without_backup ;;
+        *) rollback_upgrade ;;
+    esac
 }
 trap on_signal HUP INT TERM
+
+on_exit()
+{
+    exit_status=$?
+    trap - 0 HUP INT TERM
+    [ "$finished" -eq 1 ] || [ "$recovering" -eq 1 ] ||
+        case "$state" in
+            OLD_STOPPED|BACKING_UP) restart_old_without_backup ;;
+            BACKUP_READY|CANDIDATE_INSTALLED|CANDIDATE_RUNNING) rollback_upgrade ;;
+        esac
+    exit "$exit_status"
+}
+trap on_exit 0
 
 maybe_inject_signal()
 {
@@ -89,7 +134,15 @@ running_version=$(runtime_version) || result_fail precheck_failed
 "$install_dir/scripts/health-check.sh" >/dev/null 2>&1 || result_fail precheck_failed
 [ "$(sqlite3 "$database" 'PRAGMA integrity_check;' 2>/dev/null)" = ok ] || result_fail precheck_failed
 
-required_bytes=$(du -sk "$install_dir" "$database" 2>/dev/null | awk '{sum += $1} END {print sum * 1024}')
+required_kb=0
+for backup_member in "$install_dir" "$unit_dir/edge-gateway-lite.service" \
+    "$config_dir/edge-gateway-lite.env" "$database" "$database-wal" "$database-shm"; do
+    [ -e "$backup_member" ] || continue
+    member_kb=$(du -sk "$backup_member" 2>/dev/null | awk 'NR == 1 {print $1}') || result_fail precheck_failed
+    case "$member_kb" in ''|*[!0-9]*) result_fail precheck_failed ;; esac
+    required_kb=$((required_kb + member_kb))
+done
+required_bytes=$((required_kb * 1024))
 available_bytes=${UPGRADE_TEST_AVAILABLE_BYTES:-}
 if [ -z "$available_bytes" ]; then
     install -d -m 0700 "$backup_root"
@@ -110,6 +163,7 @@ UPGRADE_CANDIDATE_VERSION=$candidate_version
 EDGEVISION_STATE_DIR=$state_dir
 export UPGRADE_INSTALL_DIR UPGRADE_UNIT_FILE UPGRADE_CONFIG_FILE UPGRADE_DATABASE
 export UPGRADE_BACKUP_ROOT UPGRADE_RUNNING_VERSION UPGRADE_CANDIDATE_VERSION EDGEVISION_STATE_DIR
+state=BACKING_UP
 upgrade_backup_create || verify_old_after_backup_failure
 state=BACKUP_READY
 maybe_inject_signal
@@ -126,7 +180,7 @@ if ! "$install_dir/scripts/service-activate.sh" "$service" >/dev/null 2>&1; then
 fi
 state=CANDIDATE_RUNNING
 maybe_inject_signal
-actual=$(runtime_version) || rollback_upgrade
-[ "$actual" = "$candidate_version" ] || rollback_upgrade
+wait_for_version "$candidate_version" || rollback_upgrade
 "$install_dir/scripts/health-check.sh" >/dev/null 2>&1 || rollback_upgrade
+finished=1
 printf '%s\n' upgrade_committed

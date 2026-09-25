@@ -21,8 +21,15 @@ EOF
 make_gatewayctl()
 {
     path=$1
-    cat >"$path" <<'EOF'
+cat >"$path" <<'EOF'
 #!/bin/sh
+[ ! -e "$TEST_ROOT/ready-count" ] || {
+    count=$(cat "$TEST_ROOT/ready-count")
+    [ "$count" -le 0 ] || {
+        printf '%s\n' "$((count - 1))" >"$TEST_ROOT/ready-count"
+        exit 1
+    }
+}
 printf 'ok version=%s\n' "$(cat "$TEST_ROOT/active-version")"
 EOF
     chmod 0755 "$path"
@@ -94,6 +101,7 @@ case "$1" in
         active=${version#edge-gateway-lite }
         if [ "$active" = 0.2.0 ] && [ -e "$TEST_ROOT/wrong-runtime" ]; then active=0.1.0; fi
         printf '%s\n' "$active" >"$TEST_ROOT/active-version"
+        [ ! -e "$TEST_ROOT/delay-ready" ] || printf '2\n' >"$TEST_ROOT/ready-count"
         if [ "${version#edge-gateway-lite }" = 0.2.0 ] && [ -e "$TEST_ROOT/change-db" ]; then
             printf 'candidate-write\n' >>"$EDGEVISION_STATE_DIR/gateway.db"
         fi
@@ -127,6 +135,7 @@ run_upgrade()
     EDGEVISION_UNIT_DIR=$unit_dir UPGRADE_TEST_AVAILABLE_BYTES=${UPGRADE_TEST_AVAILABLE_BYTES:-999999999} \
     UPGRADE_TEST_SIGNAL_AFTER_STATE=${UPGRADE_TEST_SIGNAL_AFTER_STATE:-} \
     UPGRADE_TEST_FAIL_BACKUP_PUBLISH=${UPGRADE_TEST_FAIL_BACKUP_PUBLISH:-0} \
+    UPGRADE_READY_ATTEMPTS=${UPGRADE_READY_ATTEMPTS:-5} UPGRADE_READY_DELAY=0 \
     PATH="$case_root/tools:$PATH" sh "$upgrade"
 }
 
@@ -190,7 +199,27 @@ expect_failure upgrade_failed_rollback_ok
 unset UPGRADE_TEST_SIGNAL_AFTER_STATE
 
 prepare_case
+UPGRADE_TEST_SIGNAL_AFTER_STATE=OLD_STOPPED
+export UPGRADE_TEST_SIGNAL_AFTER_STATE
+expect_failure backup_failed_old_restored
+unset UPGRADE_TEST_SIGNAL_AFTER_STATE
+[ "$(cat "$case_root/active-version")" = 0.1.0 ]
+grep -Fx 'restart edge-gateway-lite.service' "$case_root/calls" >/dev/null
+
+prepare_case
+touch "$case_root/delay-ready"
+run_upgrade >"$case_root/output"
+grep -Fx upgrade_committed "$case_root/output" >/dev/null
+
+prepare_case
 UPGRADE_TEST_AVAILABLE_BYTES=0
+export UPGRADE_TEST_AVAILABLE_BYTES
+expect_failure precheck_failed
+unset UPGRADE_TEST_AVAILABLE_BYTES
+
+prepare_case
+dd if=/dev/zero of="$database-wal" bs=1024 count=64 2>/dev/null
+UPGRADE_TEST_AVAILABLE_BYTES=32768
 export UPGRADE_TEST_AVAILABLE_BYTES
 expect_failure precheck_failed
 unset UPGRADE_TEST_AVAILABLE_BYTES

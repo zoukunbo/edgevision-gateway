@@ -52,6 +52,20 @@ upgrade_backup_create
 grep -Fx 'complete=1' "$backup_root/previous/manifest" >/dev/null
 [ "$(upgrade_manifest_get "$backup_root/previous/manifest" running_version)" = 0.1.0 ]
 
+# A failed program copy must not publish or replace the last good backup.
+good_manifest_sha=$(sha256sum "$backup_root/previous/manifest")
+mkdir -p "$root/fail-tools"
+cat >"$root/fail-tools/cp" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod 0755 "$root/fail-tools/cp"
+if PATH="$root/fail-tools:$PATH" upgrade_backup_create; then
+    echo 'program copy failure published a backup' >&2
+    exit 1
+fi
+[ "$(sha256sum "$backup_root/previous/manifest")" = "$good_manifest_sha" ]
+
 inode_before=$(stat -c %i "$database")
 if upgrade_database_changed; then
     echo 'unchanged database reported changed' >&2
@@ -104,6 +118,23 @@ upgrade_restore_program
 grep -Fx two "$install_dir/bin/gateway" >/dev/null
 grep -Fx unit-two "$unit" >/dev/null
 grep -Fx config-two "$config" >/dev/null
+[ -d "$backup_root/program-quarantine" ]
+upgrade_cleanup_quarantine
+[ ! -e "$backup_root/program-quarantine" ]
+
+# Restore must reject a target that differs from the recorded database path.
+original_database=$UPGRADE_DATABASE
+foreign_database=$state/foreign.db
+printf 'sentinel\n' >"$foreign_database"
+UPGRADE_DATABASE=$foreign_database
+export UPGRADE_DATABASE
+if upgrade_restore_database_if_changed; then
+    echo 'restored database to a path not recorded in the manifest' >&2
+    exit 1
+fi
+grep -Fx sentinel "$foreign_database" >/dev/null
+UPGRADE_DATABASE=$original_database
+export UPGRADE_DATABASE
 
 sentinel=$root/sentinel
 printf 'safe\n' >"$sentinel"
@@ -123,6 +154,13 @@ if upgrade_validate_database_path "$bad_newline" /userdata/edgevision-gateway; t
     exit 1
 fi
 grep -Fx safe "$sentinel" >/dev/null
+
+mkdir -p "$root/outside"
+ln -s "$root/outside" "$state/link-out"
+if upgrade_validate_database_path "$state/link-out/escape.db" "$state"; then
+    echo 'accepted database path through escaping symlink' >&2
+    exit 1
+fi
 
 UPGRADE_BACKUP_ROOT=$state/../outside
 export UPGRADE_BACKUP_ROOT

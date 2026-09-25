@@ -14,7 +14,10 @@ upgrade_validate_database_path()
         *'
 '*|*'*'*|*'?'*|*'['*|*']'*|*/../*|*/..) return 1 ;;
     esac
-    [ -n "${upgrade_path##*/}" ]
+    [ -n "${upgrade_path##*/}" ] || return 1
+    upgrade_root_real=$(readlink -f "$upgrade_root") || return 1
+    upgrade_parent_real=$(readlink -f "$(dirname "$upgrade_path")") || return 1
+    case "$upgrade_parent_real/" in "$upgrade_root_real"/*) ;; *) return 1 ;; esac
 }
 
 upgrade_validate_managed_path()
@@ -30,7 +33,15 @@ upgrade_validate_managed_path()
         *'
 '*|*'*'*|*'?'*|*'['*|*']'*|*/../*|*/..) return 1 ;;
     esac
-    [ -n "${upgrade_managed_path##*/}" ]
+    [ -n "${upgrade_managed_path##*/}" ] || return 1
+    upgrade_managed_root_real=$(readlink -f "$upgrade_managed_root") || return 1
+    if [ -e "$upgrade_managed_path" ]; then
+        upgrade_managed_real=$(readlink -f "$upgrade_managed_path") || return 1
+    else
+        upgrade_managed_parent=$(readlink -f "$(dirname "$upgrade_managed_path")") || return 1
+        upgrade_managed_real=$upgrade_managed_parent/${upgrade_managed_path##*/}
+    fi
+    case "$upgrade_managed_real" in "$upgrade_managed_root_real"/*) ;; *) return 1 ;; esac
 }
 
 upgrade_validate_layout()
@@ -102,6 +113,9 @@ upgrade_backup_manifest_valid()
     upgrade_backup_dir=$1
     upgrade_manifest=$upgrade_backup_dir/manifest
     [ "$(upgrade_manifest_get "$upgrade_manifest" complete 2>/dev/null)" = 1 ] || return 1
+    [ -d "$upgrade_backup_dir/install" ] || return 1
+    [ -f "$upgrade_backup_dir/systemd/edge-gateway-lite.service" ] || return 1
+    [ -f "$upgrade_backup_dir/config/edge-gateway-lite.env" ] || return 1
     upgrade_file_matches_manifest "$upgrade_manifest" db "$upgrade_backup_dir/database/main" || return 1
     upgrade_file_matches_manifest "$upgrade_manifest" wal "$upgrade_backup_dir/database/wal" || return 1
     upgrade_file_matches_manifest "$upgrade_manifest" shm "$upgrade_backup_dir/database/shm"
@@ -113,31 +127,31 @@ upgrade_backup_create()
     [ -d "$UPGRADE_INSTALL_DIR" ] && [ -f "$UPGRADE_UNIT_FILE" ] &&
         [ -f "$UPGRADE_CONFIG_FILE" ] || return 1
 
-    install -d -m 0700 "$UPGRADE_BACKUP_ROOT"
+    install -d -m 0700 "$UPGRADE_BACKUP_ROOT" || return 1
     upgrade_new=$UPGRADE_BACKUP_ROOT/previous.new
     upgrade_old=$UPGRADE_BACKUP_ROOT/previous.old
     upgrade_previous=$UPGRADE_BACKUP_ROOT/previous
-    rm -rf -- "$upgrade_new" "$upgrade_old"
+    rm -rf -- "$upgrade_new" "$upgrade_old" || return 1
     install -d -m 0700 "$upgrade_new/install" "$upgrade_new/systemd" \
-        "$upgrade_new/config" "$upgrade_new/database"
-    cp -Rp "$UPGRADE_INSTALL_DIR"/. "$upgrade_new/install/"
-    install -m 0644 "$UPGRADE_UNIT_FILE" "$upgrade_new/systemd/edge-gateway-lite.service"
-    install -m 0644 "$UPGRADE_CONFIG_FILE" "$upgrade_new/config/edge-gateway-lite.env"
+        "$upgrade_new/config" "$upgrade_new/database" || return 1
+    cp -Rp "$UPGRADE_INSTALL_DIR"/. "$upgrade_new/install/" || return 1
+    install -m 0644 "$UPGRADE_UNIT_FILE" "$upgrade_new/systemd/edge-gateway-lite.service" || return 1
+    install -m 0644 "$UPGRADE_CONFIG_FILE" "$upgrade_new/config/edge-gateway-lite.env" || return 1
 
     upgrade_manifest=$upgrade_new/manifest
-    : >"$upgrade_manifest"
+    : >"$upgrade_manifest" || return 1
     printf 'running_version=%s\ncandidate_version=%s\ninstall_dir=%s\nunit_file=%s\nconfig_file=%s\ndatabase_path=%s\n' \
         "$UPGRADE_RUNNING_VERSION" "$UPGRADE_CANDIDATE_VERSION" \
         "$UPGRADE_INSTALL_DIR" "$UPGRADE_UNIT_FILE" "$UPGRADE_CONFIG_FILE" \
-        "$UPGRADE_DATABASE" >>"$upgrade_manifest"
+        "$UPGRADE_DATABASE" >>"$upgrade_manifest" || return 1
 
-    upgrade_record_file "$upgrade_manifest" db "$UPGRADE_DATABASE"
-    upgrade_record_file "$upgrade_manifest" wal "$UPGRADE_DATABASE-wal"
-    upgrade_record_file "$upgrade_manifest" shm "$UPGRADE_DATABASE-shm"
-    [ ! -f "$UPGRADE_DATABASE" ] || install -m 0600 "$UPGRADE_DATABASE" "$upgrade_new/database/main"
-    [ ! -f "$UPGRADE_DATABASE-wal" ] || install -m 0600 "$UPGRADE_DATABASE-wal" "$upgrade_new/database/wal"
-    [ ! -f "$UPGRADE_DATABASE-shm" ] || install -m 0600 "$UPGRADE_DATABASE-shm" "$upgrade_new/database/shm"
-    printf 'complete=1\n' >>"$upgrade_manifest"
+    upgrade_record_file "$upgrade_manifest" db "$UPGRADE_DATABASE" || return 1
+    upgrade_record_file "$upgrade_manifest" wal "$UPGRADE_DATABASE-wal" || return 1
+    upgrade_record_file "$upgrade_manifest" shm "$UPGRADE_DATABASE-shm" || return 1
+    [ ! -f "$UPGRADE_DATABASE" ] || install -m 0600 "$UPGRADE_DATABASE" "$upgrade_new/database/main" || return 1
+    [ ! -f "$UPGRADE_DATABASE-wal" ] || install -m 0600 "$UPGRADE_DATABASE-wal" "$upgrade_new/database/wal" || return 1
+    [ ! -f "$UPGRADE_DATABASE-shm" ] || install -m 0600 "$UPGRADE_DATABASE-shm" "$upgrade_new/database/shm" || return 1
+    printf 'complete=1\n' >>"$upgrade_manifest" || return 1
     upgrade_backup_manifest_valid "$upgrade_new" || return 1
 
     if [ -e "$upgrade_previous" ]; then
@@ -159,10 +173,11 @@ upgrade_backup_create()
 
 upgrade_database_changed()
 {
-    upgrade_validate_layout || return 0
+    upgrade_validate_layout || return 2
     upgrade_previous=$UPGRADE_BACKUP_ROOT/previous
     upgrade_manifest=$upgrade_previous/manifest
-    upgrade_backup_manifest_valid "$upgrade_previous" || return 0
+    upgrade_backup_manifest_valid "$upgrade_previous" || return 2
+    [ "$(upgrade_manifest_get "$upgrade_manifest" database_path)" = "$UPGRADE_DATABASE" ] || return 2
     upgrade_file_matches_manifest "$upgrade_manifest" db "$UPGRADE_DATABASE" || return 0
     upgrade_file_matches_manifest "$upgrade_manifest" wal "$UPGRADE_DATABASE-wal" || return 0
     upgrade_file_matches_manifest "$upgrade_manifest" shm "$UPGRADE_DATABASE-shm" || return 0
@@ -185,13 +200,16 @@ upgrade_restore_program()
         "$UPGRADE_UNIT_FILE" || return 1
     install -m 0644 "$upgrade_previous/config/edge-gateway-lite.env" \
         "$UPGRADE_CONFIG_FILE" || return 1
-    rm -rf -- "$upgrade_quarantine"
 }
 
 upgrade_restore_database_if_changed()
 {
-    if ! upgrade_database_changed; then
-        return 0
+    if upgrade_database_changed; then
+        :
+    else
+        upgrade_change_status=$?
+        [ "$upgrade_change_status" -eq 1 ] && return 0
+        return 1
     fi
     upgrade_previous=$UPGRADE_BACKUP_ROOT/previous
     upgrade_manifest=$upgrade_previous/manifest
@@ -213,5 +231,11 @@ upgrade_restore_database_if_changed()
     upgrade_file_matches_manifest "$upgrade_manifest" db "$UPGRADE_DATABASE" || return 1
     upgrade_file_matches_manifest "$upgrade_manifest" wal "$UPGRADE_DATABASE-wal" || return 1
     upgrade_file_matches_manifest "$upgrade_manifest" shm "$UPGRADE_DATABASE-shm" || return 1
-    rm -rf -- "$upgrade_quarantine"
+}
+
+upgrade_cleanup_quarantine()
+{
+    upgrade_validate_layout || return 1
+    rm -rf -- "$UPGRADE_BACKUP_ROOT/program-quarantine" \
+        "$UPGRADE_BACKUP_ROOT/database-quarantine"
 }
