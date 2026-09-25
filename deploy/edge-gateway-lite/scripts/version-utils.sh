@@ -1,5 +1,9 @@
 #!/bin/sh
+# 三段数字版本（major.minor.patch）的校验与比较工具函数。
+# 本文件由 upgrade-board.sh 通过“.”加载，不作为独立命令执行。
+# 比较时不把版本段转换为 shell 整数，因此前导零和超长数字不会溢出。
 
+# 只接受恰好三个非空数字段，拒绝负号、字母、空段和多余点号。
 version_is_valid()
 {
     [ "$#" -eq 1 ] || return 1
@@ -18,6 +22,7 @@ version_is_valid()
         [ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ]
 }
 
+# 去掉前导零，但数值 0 至少保留一个字符。
 decimal_normalize()
 {
     decimal_value=$1
@@ -28,6 +33,8 @@ decimal_normalize()
     printf '%s\n' "$decimal_value"
 }
 
+# 以“长度→字节序”比较任意长的非负十进制数字字符串。
+# 输出 -1、0 或 1，分别表示左值小于、等于或大于右值。
 decimal_compare()
 {
     decimal_left=$(decimal_normalize "$1")
@@ -55,6 +62,7 @@ decimal_compare()
     fi
 }
 
+# 校验并拆分版本，通过 VERSION_MAJOR/MINOR/PATCH 返回三段字符串。
 version_split()
 {
     version_is_valid "$1" || return 1
@@ -67,6 +75,7 @@ version_split()
     VERSION_PATCH=$3
 }
 
+# 按 major、minor、patch 的顺序逐段比较两个版本。
 version_compare()
 {
     [ "$#" -eq 2 ] || return 1

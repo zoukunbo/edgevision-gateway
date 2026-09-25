@@ -24,12 +24,28 @@
 | 文件 | 执行位置 | 用途 |
 | --- | --- | --- |
 | `prepare-bundle.sh` | 构建主机 | 收集二进制、目标架构共享库和部署文件，生成 `SHA256SUMS` |
-| `install-board.sh` | 目标板 | 校验发布包，复制到持久化目录，安装并启动 systemd 服务 |
+| `install-board.sh` | 目标板 | 首次安装入口：安装发布文件、启动服务并执行健康检查 |
+| `upgrade-board.sh` | 目标板 | 已有运行版本的事务升级入口：预检、备份、切换、验证或回滚 |
 | `config/edge-gateway-lite.env` | 模板；目标板使用其副本 | 定义运行目录、状态文件和数据源 |
 | `scripts/run-gateway.sh` | 目标板 | 加载配置并以前台主进程方式启动网关程序 |
 | `scripts/health-check.sh` | 目标板 | 只读检查服务、版本、设备节点和数据库 |
 | `scripts/service-activate.sh` | 目标板 | 重载 systemd 单元文件、设置开机启动并显式重启服务 |
+| `scripts/install-payload.sh` | 目标板；由安装/升级入口调用 | 校验并复制发布文件；不操作服务 |
+| `scripts/version-utils.sh` | 目标板；由升级入口加载 | 校验和比较三段数字版本，支持超长数字段 |
+| `scripts/upgrade-backup.sh` | 目标板；由升级入口加载 | 创建完整备份、判定数据库变化并执行恢复 |
 | `systemd/edge-gateway-lite.service` | 模板；安装到 `/etc/systemd/system` | 定义常驻服务、重启策略和安全限制 |
+| `tests/*.sh` | 开发主机 | 在临时目录中验证部署脚本；不放入发布包，不需要在板端手工执行 |
+
+### 哪些脚本需要手工执行
+
+正常部署时，操作者只需要直接调用三个顶层入口：
+
+1. 构建主机运行 `prepare-bundle.sh`，组装一个完整发布包。
+2. 目标板首次安装运行 `install-board.sh`。
+3. 目标板已有运行版本时运行 `upgrade-board.sh`。
+
+`scripts/` 下的文件是被上述入口调用的内部步骤；除了故障排查时可以单独运行
+`health-check.sh`，正常安装和升级不需要按文件名逐个手工执行。`tests/` 仅用于开发期回归测试。
 
 ## 发布包结构
 
@@ -76,7 +92,8 @@ edge-gateway-lite/
 
 ## 1. 组装发布包
 
-先完成 ARM64、Storage+MQTT 构建，再显式传入三个参数：
+先用 CMake 配置交叉编译并编译出 ARM64 的 `gateway` 和 `gatewayctl`，确认该构建已启用
+Storage+MQTT；然后在构建主机向 `prepare-bundle.sh` 显式传入三个参数：
 
 ```text
 prepare-bundle.sh BUILD_DIR SYSROOT OUTPUT_DIR

@@ -1,5 +1,12 @@
 #!/bin/sh
+# 事务升级的备份、变化判定与恢复函数库。
+# 本文件由 upgrade-board.sh 通过“.”加载，不作为独立命令执行。
+#
+# 备份目录 previous 只保留最近一次完整快照；previous.new 是未发布的新快照，
+# previous.old 是发布切换期间的旧快照。恢复前会将候选内容移入 quarantine 保留证据。
 
+# 数据库必须位于状态目录内，且不能包含通配符、换行或 .. 跳转。
+# readlink -f 还会拒绝通过符号链接逃离状态目录的路径。
 upgrade_validate_database_path()
 {
     [ "$#" -eq 2 ] || return 1
@@ -20,6 +27,7 @@ upgrade_validate_database_path()
     case "$upgrade_parent_real/" in "$upgrade_root_real"/*) ;; *) return 1 ;; esac
 }
 
+# 校验程序安装目录和备份目录等受管路径，规则与数据库路径一致。
 upgrade_validate_managed_path()
 {
     [ "$#" -eq 2 ] || return 1
@@ -44,6 +52,7 @@ upgrade_validate_managed_path()
     case "$upgrade_managed_real" in "$upgrade_managed_root_real"/*) ;; *) return 1 ;; esac
 }
 
+# 在任何复制、移动或删除之前统一验证当前部署布局。
 upgrade_validate_layout()
 {
     upgrade_state_root=${EDGEVISION_STATE_DIR:-/userdata/edgevision-gateway}
@@ -53,6 +62,7 @@ upgrade_validate_layout()
     [ "$UPGRADE_BACKUP_ROOT" != "$upgrade_state_root" ]
 }
 
+# 从 manifest 中读取唯一的允许字段；重复键、缺失键和未知键都失败。
 upgrade_manifest_get()
 {
     [ "$#" -eq 2 ] || return 1
@@ -70,6 +80,7 @@ upgrade_manifest_get()
     ' "$upgrade_manifest"
 }
 
+# 把文件的存在性、大小和 SHA256 记录到 manifest。
 upgrade_record_file()
 {
     [ "$#" -eq 3 ] || return 1
@@ -88,6 +99,7 @@ upgrade_record_file()
     fi
 }
 
+# 根据 manifest 同时比较文件存在性、大小和 SHA256。
 upgrade_file_matches_manifest()
 {
     [ "$#" -eq 3 ] || return 1
@@ -108,6 +120,7 @@ upgrade_file_matches_manifest()
     [ "$upgrade_actual_sha" = "$upgrade_expected_sha" ]
 }
 
+# 快照只有在 complete=1、程序/配置/单元文件存在、数据库元数据全部匹配时才有效。
 upgrade_backup_manifest_valid()
 {
     upgrade_backup_dir=$1
@@ -121,6 +134,8 @@ upgrade_backup_manifest_valid()
     upgrade_file_matches_manifest "$upgrade_manifest" shm "$upgrade_backup_dir/database/shm"
 }
 
+# 在 previous.new 中构建并自验证完整快照，然后才切换为 previous。
+# 若切换失败，会把 previous.old 恢复为 previous，不会丢失上一份有效备份。
 upgrade_backup_create()
 {
     upgrade_validate_layout || return 1
@@ -171,6 +186,8 @@ upgrade_backup_create()
     rm -rf -- "$upgrade_old"
 }
 
+# 比较当前 .db/.db-wal/.db-shm 与备份。
+# 返回 0=发生变化，1=未变，2=路径或备份验证错误；调用方不得把验证错误当成变化。
 upgrade_database_changed()
 {
     upgrade_validate_layout || return 2
@@ -184,6 +201,7 @@ upgrade_database_changed()
     return 1
 }
 
+# 恢复旧程序、systemd 单元文件和现场配置。候选程序先移入 program-quarantine。
 upgrade_restore_program()
 {
     upgrade_validate_layout || return 1
@@ -202,6 +220,8 @@ upgrade_restore_program()
         "$UPGRADE_CONFIG_FILE" || return 1
 }
 
+# 数据库未变时不进行任何移动；只在变化已被确认时按快照恢复主文件及边车文件。
+# 当前候选数据先移入 database-quarantine，供回滚失败时人工分析。
 upgrade_restore_database_if_changed()
 {
     if upgrade_database_changed; then
@@ -233,6 +253,7 @@ upgrade_restore_database_if_changed()
     upgrade_file_matches_manifest "$upgrade_manifest" shm "$UPGRADE_DATABASE-shm" || return 1
 }
 
+# 只能在旧版本已重启、版本正确且健康检查通过后清理隔离证据。
 upgrade_cleanup_quarantine()
 {
     upgrade_validate_layout || return 1
