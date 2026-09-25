@@ -1,13 +1,13 @@
-# Edge Gateway Lite v0.1 部署说明
+# 轻量边缘网关 v0.1 部署说明
 
 本目录用于把交叉编译完成的 `gateway` 及其运行依赖组装成发布包，并将其安装为
-目标板上的常驻 systemd 服务。旧的 `deploy/edgevision-outbox/` oneshot 教学部署
+目标板上的常驻 systemd 服务。旧的 `deploy/edgevision-outbox/` 单次任务（oneshot）教学部署
 继续保留；两套部署使用不同入口和数据库，不会互相覆盖。
 
 完整流程如下：
 
 ```text
-构建主机上的 ARM64 gateway + Buildroot sysroot
+构建主机上的 ARM64 网关程序 + Buildroot 目标文件系统
                     │
                     ▼ prepare-bundle.sh
               可传输的发布包
@@ -26,9 +26,9 @@
 | `prepare-bundle.sh` | 构建主机 | 收集二进制、目标架构共享库和部署文件，生成 `SHA256SUMS` |
 | `install-board.sh` | 目标板 | 校验发布包，复制到持久化目录，安装并启动 systemd 服务 |
 | `config/edge-gateway-lite.env` | 模板；目标板使用其副本 | 定义运行目录、状态文件和数据源 |
-| `scripts/run-gateway.sh` | 目标板 | 加载配置并以前台主进程方式启动 Gateway |
+| `scripts/run-gateway.sh` | 目标板 | 加载配置并以前台主进程方式启动网关程序 |
 | `scripts/health-check.sh` | 目标板 | 只读检查服务、版本、设备节点和数据库 |
-| `scripts/service-activate.sh` | 目标板 | 重载 unit、设置开机启动并显式重启服务 |
+| `scripts/service-activate.sh` | 目标板 | 重载 systemd 单元文件、设置开机启动并显式重启服务 |
 | `systemd/edge-gateway-lite.service` | 模板；安装到 `/etc/systemd/system` | 定义常驻服务、重启策略和安全限制 |
 
 ## 发布包结构
@@ -52,7 +52,7 @@ edge-gateway-lite/
 和日志位于其上一级 `/userdata/edgevision-gateway`。程序与运行状态分开，因此升级
 二进制不会覆盖数据库或日志。
 
-正式 v0.1 默认使用 `edge-gateway-lite-v0.1.db`，不会自动打开历史 oneshot 的
+正式 v0.1 默认使用 `edge-gateway-lite-v0.1.db`，不会自动打开历史单次任务部署的
 未版本化 `gateway.db`。历史数据迁移必须通过单独、可审计的迁移步骤完成，不应
 简单覆盖或改名旧数据库。
 
@@ -60,9 +60,9 @@ edge-gateway-lite/
 
 ### 构建主机
 
-- 已完成目标板架构（当前为 ARM64）的 Gateway 构建。
+- 已完成目标板架构（当前为 ARM64）的网关程序构建。
 - 构建输出目录中存在可执行的 `gateway` 和 `gatewayctl`。
-- Buildroot sysroot 中存在 `usr/lib/libmosquitto.so.1`。
+- Buildroot 目标文件系统中存在 `usr/lib/libmosquitto.so.1`。
 - 系统提供 POSIX `sh`、`install`、`find`、`xargs`、`sha256sum`、`readlink` 和 `file`。
 
 ### 目标板
@@ -71,8 +71,8 @@ edge-gateway-lite/
 - 提供 `sha256sum` 和 `sqlite3`；缺少 `sqlite3` 时安装可以复制文件，但最终健康
   检查会失败。
 - 使用真实 STM32 数据源时，默认应存在 `/dev/ttyS5` 和 `/dev/gpiochip0`。
-- 本机或网络中的 MQTT broker 应与 Gateway 当前内置配置相匹配。到达
-  `network-online.target` 只表示网络初始化完成，不保证 broker 已可用。
+- 本机或网络中的 MQTT 代理服务器应与网关程序当前内置配置相匹配。到达
+  `network-online.target` 只表示网络初始化完成，不保证代理服务器已可用。
 
 ## 1. 组装发布包
 
@@ -81,7 +81,7 @@ edge-gateway-lite/
 ```text
 prepare-bundle.sh BUILD_DIR SYSROOT OUTPUT_DIR
                   │         │       └─ 新发布包的输出目录
-                  │         └───────── Buildroot 目标 sysroot
+                  │         └───────── Buildroot 目标文件系统
                   └─────────────────── 含 gateway 的构建输出目录
 ```
 
@@ -96,12 +96,12 @@ deploy/edge-gateway-lite/prepare-bundle.sh \
 
 脚本会执行以下操作：
 
-1. 确认 `BUILD_DIR/gateway` 和 `BUILD_DIR/gatewayctl` 可执行，并确认 sysroot 中存在目标架构的
+1. 确认 `BUILD_DIR/gateway` 和 `BUILD_DIR/gatewayctl` 可执行，并确认目标文件系统中存在目标架构的
    `libmosquitto.so.1`。
 2. 拒绝非空的 `OUTPUT_DIR`，避免把旧版本和新版本混装。
-3. 创建发布目录并复制二进制、共享库、配置模板、脚本、unit 和本文档。
+3. 创建发布目录并复制二进制、共享库、配置模板、脚本、systemd 单元文件和本文档。
 4. 为发布文件生成 `SHA256SUMS`。
-5. 用 `file` 输出 Gateway 的 ELF 信息，供操作者确认架构。
+5. 用 `file` 输出网关程序的 ELF 信息，供操作者确认架构。
 
 正常结束时应看到类似输出：
 
@@ -140,7 +140,7 @@ sudo EDGEVISION_BUNDLE=/media/usb/edge-gateway-lite \
 3. 将文件复制到 `/userdata/edgevision-gateway/edge-gateway-lite`。传输介质随后可以
    卸载，服务启动不再依赖 `/mnt` 或 U 盘。
 4. 首次安装时创建 `/etc/edgevision-gateway/edge-gateway-lite.env`。
-5. 安装 systemd unit，执行 `daemon-reload`、`enable` 和显式 `restart`。
+5. 安装 systemd 单元文件，执行 `daemon-reload`、`enable` 和显式 `restart`。
 6. 等待三秒，检查 systemd 状态并运行应用级健康检查。
 
 已有的 `/etc/edgevision-gateway/edge-gateway-lite.env` 不会被模板覆盖，以免升级时
@@ -175,14 +175,14 @@ sudo systemctl restart edge-gateway-lite.service
 | `EDGEVISION_BUNDLE` | `/userdata/edgevision-gateway/edge-gateway-lite` | 已安装程序和共享库的位置 |
 | `EDGEVISION_STATE_DIR` | `/userdata/edgevision-gateway` | 数据库、日志等可写状态的基础目录 |
 | `EDGEVISION_DATABASE` | `/userdata/edgevision-gateway/edge-gateway-lite-v0.1.db` | SQLite 数据库文件 |
-| `EDGEVISION_LOG` | `/userdata/edgevision-gateway/gateway.log` | Gateway 日志文件参数 |
+| `EDGEVISION_LOG` | `/userdata/edgevision-gateway/gateway.log` | 网关程序日志文件参数 |
 | `EDGEVISION_SOURCE` | `stm32` | 数据源，只允许 `stm32` 或 `simulated` |
 | `EDGEVISION_SERIAL` | `/dev/ttyS5` | 健康检查期望的串口字符设备 |
 | `EDGEVISION_GPIOCHIP` | `/dev/gpiochip0` | 健康检查期望的 GPIO 字符设备 |
 
-注意：v0.1 的 Gateway CLI 只接收 source、database 和 log path。`EDGEVISION_SERIAL`
-与 `EDGEVISION_GPIOCHIP` 当前只改变健康检查目标，尚不能改变 Gateway 内部使用的
-设备路径。修改它们不会重新配置 Gateway 本身。
+注意：v0.1 的网关命令行接口（CLI）只接收数据源、数据库和日志路径。`EDGEVISION_SERIAL`
+与 `EDGEVISION_GPIOCHIP` 当前只改变健康检查目标，尚不能改变网关程序内部使用的
+设备路径。修改它们不会重新配置网关程序本身。
 
 需要在没有 STM32 硬件的环境中验证基础流程时，可将配置改为：
 
@@ -217,7 +217,7 @@ journalctl -u edge-gateway-lite.service -f
 journalctl -u edge-gateway-lite.service --no-pager
 ```
 
-健康检查只读取状态，不会启动、停止或修改 Gateway。成功输出类似：
+健康检查只读取状态，不会启动、停止或修改网关程序。成功输出类似：
 
 ```text
 OK service active
@@ -256,7 +256,7 @@ OK edge-gateway-lite healthy
 | `backup_failed_old_restored` | 候选版本未启动；检查备份空间和文件系统 |
 | `upgrade_failed_rollback_ok` | 旧版本已恢复且健康；排查候选版本 |
 | `upgrade_failed_rollback_unhealthy` | 文件和版本已恢复，但串口等环境仍不健康 |
-| `rollback_failed` | 停止自动操作，保留 `previous` 和 quarantine，转人工恢复 |
+| `rollback_failed` | 停止自动操作，保留 `previous` 和隔离目录（quarantine），转人工恢复 |
 
 在构建主机生成全新发布包并传到目标板后，首次安装运行
 `install-board.sh`；目标板已有运行版本时只能运行 `upgrade-board.sh`。升级会替换 `/userdata/.../edge-gateway-lite` 下的程序、
@@ -275,7 +275,7 @@ OK edge-gateway-lite healthy
 ```
 
 如需回滚，使用之前保存的完整旧发布包重新运行其 `install-board.sh`。若新旧版本的数据
-库 schema 不兼容，还必须按对应版本的迁移/回滚方案处理数据库，不能只替换二进制。
+库结构（schema）不兼容，还必须按对应版本的迁移/回滚方案处理数据库，不能只替换二进制。
 
 ## 6. 常见故障排查
 
@@ -286,7 +286,7 @@ OK edge-gateway-lite healthy
 
 ### `libmosquitto.so.1 not found in sysroot`
 
-确认第二个参数是目标板 Buildroot 的 sysroot，而不是主机根目录；同时确认目标固件已
+确认第二个参数是目标板 Buildroot 的目标文件系统，而不是主机根目录；同时确认目标固件已
 启用 Mosquitto 客户端库。不要复制 x86 主机上的库到 ARM64 发布包。
 
 ### `sha256sum: WARNING ... did NOT match`
@@ -303,7 +303,7 @@ systemctl status edge-gateway-lite.service --no-pager --full
 journalctl -u edge-gateway-lite.service -b --no-pager
 ```
 
-重点检查配置路径、Gateway 架构、共享库、串口/GPIO 权限和数据库错误。
+重点检查配置路径、网关程序架构、共享库、串口/GPIO 权限和数据库错误。
 
 ### `FAIL serial=...` 或 `FAIL gpiochip=...`
 
@@ -323,12 +323,12 @@ ls -l /dev/ttyS5 /dev/gpiochip0
 
 ### `database stats unavailable`
 
-数据库可能尚未初始化、schema 与 v0.1 不匹配，或表已损坏。先查看服务日志，再使用
+数据库可能尚未初始化、数据库结构与 v0.1 不匹配，或表已损坏。先查看服务日志，再使用
 只读方式检查 `PRAGMA user_version;` 和 `.schema`；不要直接用空数据库覆盖现场文件。
 
 ## 7. 当前版本边界
 
 - 默认使用 STM32 Modbus 源、板端 UART5、GPIO22 和本机 MQTT 1883。
 - systemd 以 root 运行以访问当前板端受限的 GPIO 字符设备；生产环境应再收紧权限。
-- 当前 Gateway CLI 只允许配置 source、database 和 log path；串口/GPIO/MQTT 参数仍采用程序默认值。
-- v0.1 是 at-least-once；消费端必须按持久化 `message_id` 幂等。
+- 当前网关命令行接口（CLI）只允许配置数据源、数据库和日志路径；串口/GPIO/MQTT 参数仍采用程序默认值。
+- v0.1 采用“至少一次”（at-least-once）投递语义；消费端必须按持久化 `message_id` 幂等。
