@@ -81,3 +81,6 @@
 /frame_protocol_test
 /net_module_test
 /net_stress_test
+
+# Local isolated Git worktrees
+/.worktrees/
