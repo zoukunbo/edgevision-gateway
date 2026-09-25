@@ -60,6 +60,7 @@ if [ -x "$bundle/bin/gateway" ]; then
             fi
             ;;
         "")
+            check_fail "candidate version reply is empty"
             ;;
         *)
             check_fail "unexpected candidate version output: $candidate_output"

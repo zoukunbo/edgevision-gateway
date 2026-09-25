@@ -25,7 +25,11 @@ EOF
 
 cat >"$test_dir/bundle/bin/gateway" <<'EOF'
 #!/bin/sh
-printf 'edge-gateway-lite 0.2.0\n'
+case "${GATEWAY_MODE:-normal}" in
+    normal) printf 'edge-gateway-lite 0.2.0\n' ;;
+    empty) ;;
+    *) exit 2 ;;
+esac
 EOF
 
 cat >"$test_dir/bundle/bin/gatewayctl" <<'EOF'
@@ -72,7 +76,7 @@ output="$test_dir/output.txt"
 
 run_health()
 {
-    GATEWAYCTL_MODE=$1 PATH="$test_dir/tools:$PATH" \
+    GATEWAYCTL_MODE=$1 GATEWAY_MODE=${2:-normal} PATH="$test_dir/tools:$PATH" \
         EDGEVISION_CONFIG="$test_dir/edge-gateway-lite.env" \
         "$health_check" >"$output" 2>&1
 }
@@ -115,3 +119,11 @@ printf 'PASS health check rejects gatewayctl failure\n'
 expect_failure missing_socket "FAIL running version probe failed"
 grep -F "OK database integrity=ok" "$output" >/dev/null
 printf 'PASS missing socket does not skip database checks\n'
+
+if run_health match empty; then
+    echo "expected health check to reject empty candidate-version output" >&2
+    cat "$output" >&2
+    exit 1
+fi
+grep -F "FAIL candidate version reply is empty" "$output" >/dev/null
+printf 'PASS health check rejects empty candidate-version output\n'
