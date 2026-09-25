@@ -1,17 +1,31 @@
 [Unit]
 Description=Edge Gateway Lite v0.1
+# 声明服务希望网络完成初始化，并通过 After 保证启动顺序。
+# network-online.target 不保证 MQTT broker 已经可连接；连接失败由 Gateway 自身
+# 的重试机制和下面的 Restart 策略处理。systemd 不支持配置项后的行尾注释。
 Wants=network-online.target
 After=network-online.target
+# 启动前先检查，运行脚本不存在或不可执行时不尝试启动，避免产生无意义的重启循环。
 ConditionFileIsExecutable=/userdata/edgevision-gateway/edge-gateway-lite/scripts/run-gateway.sh
 
 [Service]
+# run-gateway.sh 最终使用 exec 启动 Gateway，因此无需 fork/PID 文件。
 Type=simple
 # 当前 OK1126B-S 的 gpiochip0 仅 root 可访问；后续可用 udev/group 收紧权限。
 User=root
+# 前导减号表示配置文件不存在时不因此拒绝启动，启动脚本会使用内置默认值。
 EnvironmentFile=-/etc/edgevision-gateway/edge-gateway-lite.env
+# systemd 创建并在服务停止后清理运行时目录；命令 socket 不再依赖 /tmp。
+RuntimeDirectory=edgevision-gateway
+RuntimeDirectoryMode=0755
+Environment=EDGEVISION_COMMAND_SOCKET=/run/edgevision-gateway/control.sock
 ExecStart=/userdata/edgevision-gateway/edge-gateway-lite/scripts/run-gateway.sh
+# 仅在异常退出时重启；正常停止不会立刻拉起。两次启动之间等待 3 秒。
+# 异常：退出码 不等于 0 被信号终止(如SIGSEGV段错误，SIGKILL,SIGABRT崩溃) 超时未退出
+# 正常：退出码 = 0  被systemctl stop 主动终止
 Restart=on-failure
 RestartSec=3
+# 停止服务时向 Gateway 发送 SIGTERM，最多等待 3 秒后再由 systemd 强制终止。
 KillSignal=SIGTERM
 TimeoutStopSec=3
 
@@ -26,4 +40,5 @@ StandardOutput=journal
 StandardError=journal
 
 [Install]
+# enable 会把本服务挂入 multi-user.target，使目标板进入多用户模式时自动启动。
 WantedBy=multi-user.target
