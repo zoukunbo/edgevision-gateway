@@ -62,6 +62,8 @@ gateway_execute_command() -> gateway_handle_command()
 在正式 systemd 部署中，unit 创建 `/run/edgevision-gateway` 并设置
 `EDGEVISION_COMMAND_SOCKET=/run/edgevision-gateway/control.sock`。运行时目录由
 systemd 管理，因此即使服务保留 `PrivateTmp=true`，外部运维客户端仍可访问命令通道。
+事务升级也通过该通道查询实际运行版本；只检查磁盘上的候选二进制不能证明
+systemd 已切换到新进程。
 
 示例：
 

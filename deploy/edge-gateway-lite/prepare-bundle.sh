@@ -89,8 +89,12 @@ install -m 0644 "$script_dir/config/edge-gateway-lite.env" "$output_dir/config/"
 install -m 0755 "$script_dir/scripts/run-gateway.sh" "$output_dir/scripts/"
 install -m 0755 "$script_dir/scripts/health-check.sh" "$output_dir/scripts/"
 install -m 0755 "$script_dir/scripts/service-activate.sh" "$output_dir/scripts/"
+install -m 0755 "$script_dir/scripts/install-payload.sh" "$output_dir/scripts/"
+install -m 0755 "$script_dir/scripts/version-utils.sh" "$output_dir/scripts/"
+install -m 0755 "$script_dir/scripts/upgrade-backup.sh" "$output_dir/scripts/"
 install -m 0644 "$script_dir/systemd/edge-gateway-lite.service" "$output_dir/systemd/"
 install -m 0755 "$script_dir/install-board.sh" "$output_dir/install-board.sh"
+install -m 0755 "$script_dir/upgrade-board.sh" "$output_dir/upgrade-board.sh"
 install -m 0644 "$script_dir/README.md" "$output_dir/README.md"
 
 # 为板端安装生成完整性校验清单。
@@ -106,7 +110,7 @@ install -m 0644 "$script_dir/README.md" "$output_dir/README.md"
     cd "$output_dir"
     find bin lib config scripts systemd -type f -print | LC_ALL=C sort | \
         xargs sha256sum > SHA256SUMS
-    sha256sum install-board.sh README.md >> SHA256SUMS
+    sha256sum install-board.sh upgrade-board.sh README.md >> SHA256SUMS
 )
 
 # 交叉编译产物通常不能在 x86 构建主机执行，因此这里不运行 gateway --version；
