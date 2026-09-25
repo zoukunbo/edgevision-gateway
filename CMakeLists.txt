@@ -494,6 +494,9 @@ edgevision_enable_warnings(network_client_demo)
 add_executable(gatewayctl
     examples/gatewayctl.c
 )
+target_include_directories(gatewayctl PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+)
 target_compile_definitions(gatewayctl PRIVATE
     _POSIX_C_SOURCE=200809L
 )
@@ -543,6 +546,21 @@ include(CTest)
 
 # if/endif 根据变量真假决定是否处理其中命令。
 if(BUILD_TESTING)
+    if(EDGEVISION_ENABLE_STORAGE AND EDGEVISION_ENABLE_MQTT)
+    add_test(
+        NAME gateway_command_socket
+        COMMAND ${CMAKE_COMMAND} -E env
+            GATEWAY_EXE=$<TARGET_FILE:gateway>
+            GATEWAYCTL_EXE=$<TARGET_FILE:gatewayctl>
+            PROJECT_VERSION=${PROJECT_VERSION}
+            sh ${CMAKE_CURRENT_SOURCE_DIR}/tests/gateway_command_socket_test.sh
+    )
+    set_tests_properties(gateway_command_socket PROPERTIES
+        RUN_SERIAL TRUE
+        TIMEOUT 10
+    )
+    endif()
+
     # D36 收尾：小型 PTY 回归和数据源占位契约，不模拟 RS485 电气时序。
     add_executable(serial_baseline_test tests/serial_baseline_test.c)
     target_link_libraries(serial_baseline_test PRIVATE edgevision_serial edgevision_source)

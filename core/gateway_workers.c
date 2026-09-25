@@ -3,6 +3,7 @@
 #include "gateway_workers.h"
 
 #include "blocking_queue.h"
+#include "command_socket_path.h"
 #include "cJSON.h"
 #include "graceful_shutdown.h"
 #include "mqtt_command_receiver.h"
@@ -31,7 +32,6 @@
 #define GATEWAY_SOURCE_INTERVAL_MS 1000
 #define GATEWAY_DELIVERY_RETRY_MS 1000
 #define GATEWAY_PUBLISH_TIMEOUT_SECONDS 3
-#define GATEWAY_COMMAND_SOCKET_PATH "/tmp/edgevision-study.sock"
 #define GATEWAY_COMMAND_IO_TIMEOUT_SECONDS 3
 #define GATEWAY_MQTT_COMMAND_QUEUE_CAPACITY 8u
 #define GATEWAY_MQTT_COMMAND_TOPIC_CAPACITY 384u
@@ -811,13 +811,18 @@ static void gateway_worker_fail(gateway_workers_t *workers,
 static void *gateway_command_worker(void *argument)
 {
     gateway_workers_t *workers = argument;
-    const char *socket_path = GATEWAY_COMMAND_SOCKET_PATH;
+    const char *socket_path = edgevision_command_socket_path();
     bool path_bound = false;
 
     int listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (listen_fd == -1) {
         gateway_worker_fail(workers, "command socket failed");
         return NULL;
+    }
+
+    if (strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
+        gateway_worker_fail(workers, "command socket path too long");
+        goto CLEANUP;
     }
 
     struct sockaddr_un addr = {0};

@@ -1,3 +1,5 @@
+#include "command_socket_path.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -118,6 +120,13 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    const char *socket_path = edgevision_command_socket_path();
+    if (strlen(socket_path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
+    {
+        fprintf(stderr, "command socket path too long\n");
+        return 1;
+    }
+
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd == -1)
     {
@@ -129,7 +138,7 @@ int main(int argc, char *argv[])
     struct sockaddr_un addr = {0};
     addr.sun_family = AF_UNIX;
     snprintf(addr.sun_path, sizeof(addr.sun_path),
-             "%s", "/tmp/edgevision-study.sock");
+             "%s", socket_path);
 
     // 3. 向网关发起连接。
     if (connect(fd, (const struct sockaddr *)&addr,
