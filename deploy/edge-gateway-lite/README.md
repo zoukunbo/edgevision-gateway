@@ -238,6 +238,26 @@ OK edge-gateway-lite healthy
 
 ## 5. 升级与回滚
 
+首次安装使用 `install-board.sh`；已有运行版本时，使用 `upgrade-board.sh`。
+事务升级只在 `running_version < candidate_version` 且所有安全检查、运行版本验证和
+健康检查全部通过时提交。
+
+升级前备份位于
+`/userdata/edgevision-gateway/upgrade-backup/previous`，只保留最近一次完整备份。
+候选版本失败时先停止候选服务；仅当 `.db`、`.db-wal`、`.db-shm` 的存在性、
+大小或校验值发生变化时恢复数据库。
+
+稳定结果行及处理方式：
+
+| 结果 | 操作者处理 |
+| --- | --- |
+| `upgrade_committed` | 升级成功，继续运行新版本 |
+| `precheck_failed` | 旧服务未停止；修复候选包、版本关系或环境后重试 |
+| `backup_failed_old_restored` | 候选版本未启动；检查备份空间和文件系统 |
+| `upgrade_failed_rollback_ok` | 旧版本已恢复且健康；排查候选版本 |
+| `upgrade_failed_rollback_unhealthy` | 文件和版本已恢复，但串口等环境仍不健康 |
+| `rollback_failed` | 停止自动操作，保留 `previous` 和 quarantine，转人工恢复 |
+
 升级步骤与首次安装相同：在构建主机生成一个全新的发布包，将其传到目标板，再运行
 新包中的 `install-board.sh`。升级会替换 `/userdata/.../edge-gateway-lite` 下的程序、
 脚本和模板，但不会覆盖 `/etc` 中的现场配置、数据库或日志。
