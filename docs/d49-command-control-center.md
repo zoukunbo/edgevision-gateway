@@ -54,8 +54,14 @@ gateway_execute_command() -> gateway_handle_command()
 
 ### 3.1 本地 Unix socket
 
-`gatewayctl` 连接 `/tmp/edgevision-study.sock`，发送一条以换行结束的文本命令。服务端
+`gatewayctl` 发送一条以换行结束的文本命令。手工开发启动时，客户端与服务端
+都默认使用 `/tmp/edgevision-study.sock`；可通过 `EDGEVISION_COMMAND_SOCKET`
+同时改变两端路径。服务端
 读取完整行后调用共享执行函数，再把文本回复写回客户端。
+
+在正式 systemd 部署中，unit 创建 `/run/edgevision-gateway` 并设置
+`EDGEVISION_COMMAND_SOCKET=/run/edgevision-gateway/control.sock`。运行时目录由
+systemd 管理，因此即使服务保留 `PrivateTmp=true`，外部运维客户端仍可访问命令通道。
 
 示例：
 
