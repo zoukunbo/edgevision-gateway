@@ -80,7 +80,7 @@ cmake --build build-d36-closeout --target modbus_rtu_demo -j2
 sequence=1/2，共用同一timestamp_ms；发送端得到两次PUBLISH_CONFIRMED，
 订阅端接收的完整JSON逐字段相等。
 
-日志：[主机样本到MQTT证据](../hardware/rs485/2026-08-31-modbus-measurement-mqtt.log)。
+日志：[主机样本到MQTT证据](../../hardware/rs485/2026-08-31-modbus-measurement-mqtt.log)。
 
 证据边界：
 - 本次输入是固定寄存器样本，未访问COM9或开发板，不声称本次重新经过UART。
@@ -123,7 +123,7 @@ RS485 closed
 - SSH临时转发-R 127.0.0.1:1883:127.0.0.1:1883，让板端回环连接到WSL已有Broker。
 - 独立订阅端SUBACK就绪后才启动板端；命令退出时转发关闭，COM9也已释放。
 
-日志：[实板串口到MQTT记录](../hardware/rs485/2026-08-31-modbus-live-mqtt.log)。
+日志：[实板串口到MQTT记录](../../hardware/rs485/2026-08-31-modbus-live-mqtt.log)。
 
 ### 独立保留的异常观察
 

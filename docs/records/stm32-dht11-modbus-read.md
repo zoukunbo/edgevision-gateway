@@ -132,10 +132,10 @@ STM32 HEX SHA256：0b482afbde854fe5483393aeb2a6e39a09c28b54e35f5f633b532c4ad0458
 STM32 AppRTOS.c SHA256：799d64db099f48a63ac454360a4cc421acfcac8f6c87fa82d1dfddf18cf82354。
 
 记录：
-- [无临时延时的实板读取](../hardware/rs485/2026-08-31-stm32-temt-no-delay-200506.log)
-- [旧程序加20ms对照](../hardware/rs485/2026-08-31-stm32-delay20-195508.log)
-- [STM32构建/烧录与文件清单](../hardware/rs485/2026-08-31-stm32-no-delay-firmware.log)
-- [最终主机回归记录](../hardware/rs485/2026-08-31-tx-complete-ctest.log)
+- [无临时延时的实板读取](../../hardware/rs485/2026-08-31-stm32-temt-no-delay-200506.log)
+- [旧程序加20ms对照](../../hardware/rs485/2026-08-31-stm32-delay20-195508.log)
+- [STM32构建/烧录与文件清单](../../hardware/rs485/2026-08-31-stm32-no-delay-firmware.log)
+- [最终主机回归记录](../../hardware/rs485/2026-08-31-tx-complete-ctest.log)
 
 停止点：本次不再重复现场请求，不追加MQTT或持久化。没有进行高负载、断电复现、
 完整电气测量或20组真实事务，不替代原D36严格验收。用户态调度仍无硬实时保证。

@@ -1,4 +1,6 @@
-# EdgeVision systemd、NFS 与板端持久化部署教程｜2026-09-01
+# EdgeVision systemd、NFS 与板端持久化部署记录｜2026-09-01
+
+> **历史记录：** 本文保留 2026-09-01 当天已经执行的完整过程、环境路径和验证证据，不再作为当前操作入口。现在配置 NFS 请看 [NFS 开发环境运维指南](../operations/nfs-development.md)，配置开机挂载和服务请看 [systemd 板端部署运维指南](../operations/systemd-board-deployment.md)。
 
 > 适合第一次接触 NFS 和 systemd 的读者。本文不仅给出命令，还解释每一步解决什么问题、命令改变了什么、怎样判断成功。
 >

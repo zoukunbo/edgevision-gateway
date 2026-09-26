@@ -10,11 +10,11 @@ WSL Ubuntu-22.04 工程：`/home/zoukunbo/project/edgevision-gateway`
 
 按顺序读取：
 
-1. `docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md`
-2. `docs/modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md`
-3. `docs/learning-progress-2026-08-31.md`
-4. `docs/sqlite-outbox-learning-2026-09-01.md`
-5. `docs/systemd-nfs-board-deployment-2026-09-01.md`
+1. `docs/records/week06-d36-d42-audit-and-next-plan-2026-09-02.md`
+2. `docs/tutorials/modbus-sqlite-outbox.md`
+3. `docs/records/learning-progress-2026-08-31.md`
+4. `docs/records/sqlite-outbox-learning-2026-09-01.md`
+5. `docs/records/systemd-nfs-board-deployment-2026-09-01.md`
 6. 根 `CMakeLists.txt`、`core/gateway.c`、`examples/storage/CMakeLists.txt` 与 `examples/storage/*.c`
 7. 项目或上级目录的 `AGENTS.md`（如果存在）
 

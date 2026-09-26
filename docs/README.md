@@ -1,104 +1,107 @@
 # EdgeVision Gateway 文档导航
 
-本目录同时保存当前工程说明、长期学习教程和按日期固化的验证记录。为避免把历史
-结论误当成当前状态，阅读时先看本页的“当前统一口径”，再按主题进入具体文档。
+文档按用途分成三类。查操作步骤进 `operations/`，复习原理进 `tutorials/`，核对某次实际运行结果进 `records/`。历史记录中的路径、IP、测试数量和完成状态只代表当时，不自动等于当前工程状态。
+
+## 我现在想找什么
+
+| 需求 | 唯一入口 |
+| --- | --- |
+| 配置、挂载或排查 NFS | [NFS 开发环境运维指南](operations/nfs-development.md) |
+| 用 ADB、SCP 或 NFS 快速部署 | [ADB、SCP 与 NFS 快速部署](operations/quick-deployment.md) |
+| 配置 systemd 开机挂载和服务 | [systemd 板端部署](operations/systemd-board-deployment.md) |
+| 接入 Buildroot 库或导出 SDK | [Buildroot 第三方库与 SDK](operations/buildroot-third-party-library-integration.md) |
+| 学习 RS485、UART5 和方向控制 | [UART5/RS485 开发教程](tutorials/rs485-uart5.md) |
+| 学习 Modbus、SQLite、Outbox、MQTT | [完整数据链路教程](tutorials/modbus-sqlite-outbox.md) |
+| 理解 Gateway 主流程 | [Gateway 代码阅读指南](tutorials/gateway-code-reading-guide.md) |
+| 查看当前/历史完成度 | [W06 严格审计](records/week06-d36-d42-audit-and-next-plan-2026-09-02.md) |
+| 查某次实板或测试结果 | [运行与验证记录](#运行与验证记录-records) |
 
 ## 建议阅读顺序
 
 第一次了解项目：
 
-1. [项目 README](../README.md)：项目能力、代码结构、构建方式和当前边界。
-2. [D49 命令控制中心](d49-command-control-center.md)：理解本地与远程命令如何复用同一
-   执行路径，以及版本、配置、暂停和存储查询的责任边界。
-3. [Modbus、SQLite 与 Outbox 初学者教程](modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md)：
-   从真实设备到可靠 MQTT 的完整数据链路。
-4. 再从下方主题索引选择协议、串口、网络、存储或部署文档。
+1. [项目 README](../README.md)：当前能力、代码结构和构建入口。
+2. [Gateway 代码阅读指南](tutorials/gateway-code-reading-guide.md)：主链如何编排。
+3. [Modbus、SQLite 与 Outbox 教程](tutorials/modbus-sqlite-outbox.md)：真实设备到可靠 MQTT 的数据链路。
+4. 按需要进入运维、网络、串口或存储专题。
 
-接续下一次学习或开发：先读
-[会话接续说明](next-chat-prompt-2026-08-31.md)，再核对当前代码和 Git 状态。该文件名
-保留首次交接日期，正文已包含 2026-09-02 的严格审计口径。
+## 运维教程 `operations/`
 
-## 当前统一口径
+这些文档回答“现在应该怎么操作”。重复命令只在一个权威入口维护。
 
-截至 2026-09-23，以下表述作为文档间出现冲突时的解释基线：
+| 文档 | 用途 |
+| --- | --- |
+| [NFS 开发环境运维指南](operations/nfs-development.md) | 主机导出、板端挂载、日常更新和故障定位 |
+| [ADB、SCP 与 NFS 快速部署](operations/quick-deployment.md) | 三种方式的选择、命令、产物校验和常见故障 |
+| [systemd 板端部署](operations/systemd-board-deployment.md) | NFS 自动挂载、服务托管、日志和验收 |
+| [Buildroot 第三方库与 SDK](operations/buildroot-third-party-library-integration.md) | Mosquitto、sysroot、SDK 和交叉编译 |
 
-- 真实 DHT11 → STM32 → RS485 → OK1126B → Modbus 04 → Measurement → MQTT 的
-  最小链路曾经跑通并留有证据。
-- SQLite/Outbox 示例已验证原子提交/回滚、pending 跨进程、发布未确认时保留以及
-  QoS 1 PUBACK 后标记 sent。
-- 启用 Storage 后，Gateway 可以选择模拟源或 STM32 Modbus 源；同时启用 Storage 与
-  MQTT 后，正式主链使用独立 worker 完成采集、SQLite/Outbox 落盘、发布和结果回写。
-- 本地 Unix socket 与远程 MQTT 已形成统一命令控制中心。D45～D48 的最小功能验收已
-  完成；D49 的 `get_version` 由学习者独立完成并通过两个入口验证。
-- 正式板端发布骨架位于 `deploy/edge-gateway-lite/`；旧的 Outbox `oneshot` 部署只作为
-  历史教学示例保留。
-- 当前只具备 at-least-once 方向；PUBACK 后、数据库更新前崩溃仍可能重复发布。
-- D50 已开始只读梳理 Buildroot、系统启动链与可恢复部署基线；尚未据此修改镜像、
-  DTB、启动配置或板端 systemd 服务。
+## 知识教程 `tutorials/`
 
-带日期文档中的测试数量、路径、运行状态和“完成”描述是当时证据，不应自动外推为
-今天的工程状态。当前构建结果以最新实际运行和根 README 为准。
+这些文档用于复习原理、接口和当前可复用做法，不承担历史运行日志的职责。
 
-## 主题索引
+### 架构、构建与控制
 
-### 架构与数据契约
-
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [Gateway 核心代码阅读指南](gateway-code-reading-guide.md) | 长期指南 | 从 `gateway_run()` 理解正式主链的编排关系 |
-| [Measurement V1 数据契约](d33-measurement-contract.md) | 规范 | 字段、范围、JSON 格式及数据源边界 |
-| [TCP 帧与 Modbus RTU 对照](d32-tcp-framing-modbus-rtu.md) | 设计说明 | 区分 TCP 字节流分帧与 Modbus RTU 事务 |
+- [Gateway 核心代码阅读](tutorials/gateway-code-reading-guide.md)
+- [Measurement V1 数据契约](tutorials/measurement-contract.md)
+- [CMake、CTest 与 Sanitizer](tutorials/build-cmake-ctest-sanitizers.md)
+- [命令控制中心](tutorials/command-control-center.md)
 
 ### 网络与并发
 
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [D29 网络入口验收记录](d29-network-validation.md) | 历史验收 | TCP/UDP、异常路径、压力测试与当时结论 |
-| [D29 目标板证据](d29-ok1126b-board-evidence.md) | 历史证据 | OK1126B-S 网络、压力和优雅退出记录 |
-| [NetworkClient 复习与面试手册](d30-network-client-review-interview.md) | 长期指南 | 非阻塞连接、退避、心跳和停止语义 |
-| [epoll 事件循环笔记](epoll-event-loop-notes.md) | 学习笔记 | 监听 FD、就绪数组和非阻塞处理模型 |
-| [D49 命令控制中心](d49-command-control-center.md) | 当前教程 | 本地/MQTT 双入口、共享 handler、去重、版本查询与使用方法 |
+- [NetworkClient 复习与面试](tutorials/network-client-review-interview.md)
+- [TCP 帧与 Modbus RTU 对照](tutorials/tcp-framing-modbus-rtu.md)
+- [epoll 事件循环](tutorials/epoll-event-loop-notes.md)
 
-### RS485、Modbus 与真实设备
+### 串口、协议与存储
 
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [D36 收尾与范围校正](d36-closeout.md) | 历史快照 | 2026-08-30 的学习停止点；页首更正优先 |
-| [UART5/RS485 与 NFS 开发指南](rs485-uart5-nfs-development-guide.md) | 历史指南 | 接线、串口、GPIO、交叉编译和早期部署；实现细节需结合页首更新 |
-| [PC 模拟寄存器映射](pc-modbus-measurement-mapping.md) | 阶段记录 | 模拟 03 响应到两条 Measurement 的映射 |
-| [STM32 DHT11 真实读取](stm32-dht11-modbus-read.md) | 实板记录 | 04 事务、寄存器语义、TX 完成修正和实板证据 |
+- [UART5/RS485 开发教程](tutorials/rs485-uart5.md)
+- [PC Modbus 到 Measurement 映射](tutorials/pc-modbus-measurement-mapping.md)
+- [Modbus、SQLite 与 Outbox 初学者教程](tutorials/modbus-sqlite-outbox.md)
+- [面试知识点](tutorials/面试八股文.md)
 
-### SQLite、Outbox 与回放
+## 运行与验证记录 `records/`
 
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [SQLite/Outbox 学习总结](sqlite-outbox-learning-2026-09-01.md) | 阶段总结 | 原子事务、pending/sent 和 at-least-once 边界 |
-| [D42 最小可审计回放包](d42-auditable-replay-2026-09-01.md) | 历史证据 | 固定输入、哈希、PUBACK、订阅和重启终态 |
-| [完整初学者教程](modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md) | 当前教程 | 串起 Modbus、Measurement、SQLite、Outbox、MQTT 和正式模块化方向 |
+这些文档回答“当时实际发生了什么”。它们用于审计和复盘，不应作为最新操作教程。
 
-### 构建、交叉编译与部署
+### 网络与板端验证
 
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [CMake、CTest 与 Sanitizer](build-cmake-ctest-sanitizers.md) | 长期指南 | 主机构建、测试、内存检查和常见错误 |
-| [Buildroot 第三方库接入](buildroot-third-party-library-integration.md) | 环境指南 | Mosquitto、sysroot、SDK 导出及架构核对 |
-| [D34 Buildroot MQTT 验证](d34-buildroot-mqtt-validation.md) | 历史验证 | 2026-08-26～28 的构建与板端 MQTT 证据 |
-| [systemd、NFS 与板端持久化部署](systemd-nfs-board-deployment-2026-09-01.md) | 已执行教程 | Outbox 示例的只读 NFS 程序与板端可写状态部署 |
+- [D29 网络入口验收](records/d29-network-validation.md)
+- [D29 OK1126B-S 板端证据](records/d29-ok1126b-board-evidence.md)
+- [D34 Buildroot/MQTT 验证](records/d34-buildroot-mqtt-validation.md)
+
+### RS485、Modbus 与数据链路
+
+- [D36 收尾记录](records/d36-closeout.md)
+- [STM32 DHT11 Modbus 实板记录](records/stm32-dht11-modbus-read.md)
+- [D40 正式链路实现复盘](records/d40-stm32-modbus-outbox-gateway-implementation-2026-09-07.md)
+
+### SQLite、Outbox 与部署
+
+- [SQLite/Outbox 阶段总结](records/sqlite-outbox-learning-2026-09-01.md)
+- [Storage/Outbox 进度](records/storage-outbox-progress-2026-09-06.md)
+- [systemd/NFS 历史部署记录](records/systemd-nfs-board-deployment-2026-09-01.md)
+- [D42 可审计回放](records/d42-auditable-replay-2026-09-01.md)
 
 ### 状态、审计与交接
 
-| 文档 | 类型 | 用途 |
-| --- | --- | --- |
-| [W06 D36～D42 严格审计](week06-d36-d42-audit-and-next-plan-2026-09-02.md) | **当前状态基线** | 区分知识、最小验证、主工程接入和严格验收 |
-| [2026-08-31 学习进度](learning-progress-2026-08-31.md) | 历史进度 | 保留过程记录；文首 2026-09-02 更正优先于正文旧表述 |
-| [下一会话接续说明](next-chat-prompt-2026-08-31.md) | 操作交接 | 快速恢复上下文、约束和下一阶段任务 |
+- [W06 D36～D42 严格审计](records/week06-d36-d42-audit-and-next-plan-2026-09-02.md)
+- [2026-08-31 学习进度](records/learning-progress-2026-08-31.md)
+- [历史会话接续说明](records/next-chat-prompt-2026-08-31.md)
 
-## 文档维护约定
+## 当前统一口径
 
-- 不因内容过时直接删除带日期的证据文档；在页首标记历史属性，并链接到最新基线。
-- 长期指南描述当前可复用机制；阶段记录只描述当时实际发生的行为。
-- “学习过”“最小行为已验证”“已接入主工程”“严格验收完成”必须分开表述。
-- 命令默认从仓库根目录执行；硬编码的本机、板端路径应注明环境和日期。
-- 新的验证记录使用 `主题-YYYY-MM-DD.md`；持续维护的契约/指南不在文件名中加日期。
-- 新增文档后更新本索引；根 README 只保留项目级入口，避免重复维护完整清单。
-- 代码、配置和日志才是事实来源。文档与当前实现冲突时，先核对 Git 和测试，再修正文档。
+- 真实 DHT11 → STM32 → RS485 → OK1126B → Modbus → Measurement → MQTT 的最小链路曾跑通并留有证据。
+- Gateway 已支持模拟源或 STM32 Modbus 源，并可通过 Storage/Outbox/MQTT worker 处理正式主链。
+- MQTT 可靠性是 at-least-once 方向；PUBACK 后、数据库更新前崩溃仍可能重复发布。
+- 正式板端发布骨架位于 `deploy/edge-gateway-lite/`；旧 Outbox oneshot 部署只作为历史验证保留。
+- 代码、配置和原始日志是事实来源；文档与实现冲突时，应重新核对 Git 和测试结果。
+
+## 文档维护规则
+
+- 新操作步骤放入 `operations/`，同一主题只保留一个权威操作入口。
+- 可长期复习的原理、接口和模式放入 `tutorials/`。
+- 带日期的运行结果、验收、进度和复盘放入 `records/`。
+- 教程不复制历史日志；记录不冒充当前教程，二者通过链接关联。
+- 文档移动或新增后必须更新本页，并检查仓库内 Markdown 链接。
+- `superpowers/` 保存设计和实施计划，不并入上述学习分类。

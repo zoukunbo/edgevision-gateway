@@ -2,7 +2,7 @@
 >
 > D36～D42 按原始 DoD 均应为“进行中”，严格验收均未通过。此前“D39/D40/D41/D42 完成”只表示对应最小示例或链路曾跑通，不能代表可复用模块、主工程接入和原始验收完成。D36 的 Notion“验收通过”属于误勾。SQLite/Outbox 仍位于 `examples/storage`，WAL 尚未实现，默认 Gateway 仍使用模拟源，板端 systemd 当前启动的是 Outbox oneshot 示例。
 >
-> 后续会话请先读 `docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md` 和 `docs/modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md`，并以严格审计结论为准。
+> 后续会话请先读 `docs/records/week06-d36-d42-audit-and-next-plan-2026-09-02.md` 和 `docs/tutorials/modbus-sqlite-outbox.md`，并以严格审计结论为准。
 
 # 学习进度与接续状态｜2026-08-31
 
@@ -108,6 +108,6 @@ ssh root@192.168.0.232 '/tmp/edgevision-stm32-temt-KZ2R2d/modbus_rtu_demo --stm3
 
 ## 下一轮唯一建议入口
 
-继续D42严格验收的第一个最小行为：只从现有日志中盘点 normal、timeout、CRC错误、设备断开四类可用原始输入，建立 corpus 清单和缺口表。先读 docs/d42-auditable-replay-2026-09-01.md 与 hardware/storage/d42-auditable-replay-2026-09-01.log。
+继续D42严格验收的第一个最小行为：只从现有日志中盘点 normal、timeout、CRC错误、设备断开四类可用原始输入，建立 corpus 清单和缺口表。先读 docs/records/d42-auditable-replay-2026-09-01.md 与 hardware/storage/d42-auditable-replay-2026-09-01.log。
 
 不查询STM32，不发送硬件请求，不重做A/B/D41，不立即实现ReplayDataSource。先确认四类证据哪些已经存在、哪些确实缺失，再决定最小代码范围。默认Gateway真实源、D41长时间/三故障/Git版本点仍是独立边界。

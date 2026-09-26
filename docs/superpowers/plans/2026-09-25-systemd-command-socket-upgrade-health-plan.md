@@ -289,7 +289,7 @@ git commit -m "fix: verify the running gateway version"
 
 **Files:**
 - Modify: `deploy/edge-gateway-lite/README.md`
-- Modify: `docs/d49-command-control-center.md`
+- Modify: `docs/tutorials/command-control-center.md`
 
 **Interfaces:**
 - Consumes: final paths and commands from Tasks 1-3.
@@ -326,6 +326,6 @@ Confirm: `PrivateTmp=true` remains; no schema/MQTT/service-user changes; `/tmp` 
 - [ ] **Step 4: Commit Task 4 documentation**
 
 ```sh
-git add deploy/edge-gateway-lite/README.md docs/d49-command-control-center.md
+git add deploy/edge-gateway-lite/README.md docs/tutorials/command-control-center.md
 git commit -m "docs: describe deployed command socket health checks"
 ```

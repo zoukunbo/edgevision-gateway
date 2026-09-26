@@ -265,7 +265,7 @@ get_version
 `gateway_execute_command()` 和 `gateway_handle_command()`；远程入口另外负责 JSON
 校验、请求去重及响应包装。命令 worker 只在 Storage 和 MQTT 同时启用的服务中运行。
 完整设计、使用示例和复习题见
-[D49 命令控制中心](docs/d49-command-control-center.md)。
+[D49 命令控制中心](docs/tutorials/command-control-center.md)。
 
 若只想在本机验证持久化链路，可启用 Storage 并使用默认模拟源：
 
@@ -349,18 +349,20 @@ MAGIC(0xA5 0x5A) + LEN(1 byte) + PAYLOAD + CRC16(2 bytes)
 ## 文档索引
 
 - [完整文档导航与当前统一口径](docs/README.md)
-- [Measurement V1 数据契约](docs/d33-measurement-contract.md)
-- [TCP 协议帧与 Modbus RTU 对照](docs/d32-tcp-framing-modbus-rtu.md)
-- [STM32/DHT11 Modbus RTU 读取记录](docs/stm32-dht11-modbus-read.md)
-- [PC Modbus 到 Measurement 映射](docs/pc-modbus-measurement-mapping.md)
-- [SQLite Outbox 初学者教程](docs/modbus-sqlite-outbox-beginner-tutorial-2026-09-02.md)
-- [systemd + NFS 目标板部署指南](docs/systemd-nfs-board-deployment-2026-09-01.md)
-- [D40 正式链路实现复盘](docs/d40-stm32-modbus-outbox-gateway-implementation-2026-09-07.md)
-- [D49 本地与 MQTT 命令控制中心](docs/d49-command-control-center.md)
-- [可审计历史回放记录](docs/d42-auditable-replay-2026-09-01.md)
-- [D36-D42 审计与下一阶段计划](docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md)
-- [最新学习进度](docs/learning-progress-2026-08-31.md)
+- [Measurement V1 数据契约](docs/tutorials/measurement-contract.md)
+- [TCP 协议帧与 Modbus RTU 对照](docs/tutorials/tcp-framing-modbus-rtu.md)
+- [STM32/DHT11 Modbus RTU 读取记录](docs/records/stm32-dht11-modbus-read.md)
+- [PC Modbus 到 Measurement 映射](docs/tutorials/pc-modbus-measurement-mapping.md)
+- [SQLite Outbox 初学者教程](docs/tutorials/modbus-sqlite-outbox.md)
+- [NFS 开发环境运维指南](docs/operations/nfs-development.md)
+- [ADB、SCP 与 NFS 快速部署指南](docs/operations/quick-deployment.md)
+- [systemd 目标板部署指南](docs/operations/systemd-board-deployment.md)
+- [D40 正式链路实现复盘](docs/records/d40-stm32-modbus-outbox-gateway-implementation-2026-09-07.md)
+- [D49 本地与 MQTT 命令控制中心](docs/tutorials/command-control-center.md)
+- [可审计历史回放记录](docs/records/d42-auditable-replay-2026-09-01.md)
+- [D36-D42 审计与下一阶段计划](docs/records/week06-d36-d42-audit-and-next-plan-2026-09-02.md)
+- [最新学习进度](docs/records/learning-progress-2026-08-31.md)
 - [RS485 接线、参数与硬件验收证据](hardware/rs485/README.md)
-- [OK1126B-S UART5/RS485 与 NFS 开发指南](docs/rs485-uart5-nfs-development-guide.md)
-- [Gateway 核心代码阅读与整链验证指南](docs/gateway-code-reading-guide.md)
-- [构建、CTest 与内存安全检查](docs/build-cmake-ctest-sanitizers.md)
+- [OK1126B-S UART5/RS485 开发教程](docs/tutorials/rs485-uart5.md)
+- [Gateway 核心代码阅读与整链验证指南](docs/tutorials/gateway-code-reading-guide.md)
+- [构建、CTest 与内存安全检查](docs/tutorials/build-cmake-ctest-sanitizers.md)

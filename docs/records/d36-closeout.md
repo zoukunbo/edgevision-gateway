@@ -69,13 +69,13 @@ Gateway的Measurement链路
 
 ## 5. 可核验的证据与位置
 
-- [接线、参数卡、原始字节和真实故障](../hardware/rs485/README.md)：用户现场证据转录，不是所有电气项已合格的声明。
-- [真实UART/GPIO取消与重开日志](../hardware/rs485/2026-08-30-source-stop.log)：SIGINT/SIGTERM取消成功、关闭后重新打开；没有新的PC实线RX声明。
+- [接线、参数卡、原始字节和真实故障](../../hardware/rs485/README.md)：用户现场证据转录，不是所有电气项已合格的声明。
+- [真实UART/GPIO取消与重开日志](../../hardware/rs485/2026-08-30-source-stop.log)：SIGINT/SIGTERM取消成功、关闭后重新打开；没有新的PC实线RX声明。
 - `build-d36-closeout/d36-board-smoke.log`：早期板端模拟TCP整链100条成功；构建目录日志非永久归档。
-- [串口实现](../modules/serial/rs485_serial.c)：截止时间生成、唯一接收循环、旧接口兼容。
-- [真实源适配](../modules/source/real_serial_source.c)及[demo](../examples/serial/rs485_demo.c)：原始字节通路，不构造温湿度。
-- [协议实现](../modules/protocol/frame.c)及[协议测试](../tests/frame_protocol_test.c)：组帧/校验/寄存器提取练习。
-- [共享截止时间测试](../tests/serial_exact_timeout_test.c)：两段共用300ms预算，迟到数据不能使第二段重新获得预算。
+- [串口实现](../../modules/serial/rs485_serial.c)：截止时间生成、唯一接收循环、旧接口兼容。
+- [真实源适配](../../modules/source/real_serial_source.c)及[demo](../../examples/serial/rs485_demo.c)：原始字节通路，不构造温湿度。
+- [协议实现](../../modules/protocol/frame.c)及[协议测试](../../tests/frame_protocol_test.c)：组帧/校验/寄存器提取练习。
+- [共享截止时间测试](../../tests/serial_exact_timeout_test.c)：两段共用300ms预算，迟到数据不能使第二段重新获得预算。
 
 最近一次代码修改后的验证（上一轮已执行，本次不重复运行）：
 

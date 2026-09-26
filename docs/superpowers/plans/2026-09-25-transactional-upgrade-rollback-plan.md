@@ -344,7 +344,7 @@ git commit -m "feat: add transactional gateway upgrades"
 **Files:**
 - Modify: `deploy/edge-gateway-lite/prepare-bundle.sh`
 - Modify: `deploy/edge-gateway-lite/README.md`
-- Modify: `docs/d49-command-control-center.md`
+- Modify: `docs/tutorials/command-control-center.md`
 - Test: all deployment shell tests and project CTest suites.
 
 **Interfaces:**
@@ -405,6 +405,6 @@ Confirm all eleven spec sections have an implementation or documentation counter
 ```sh
 git add deploy/edge-gateway-lite/prepare-bundle.sh \
     deploy/edge-gateway-lite/README.md \
-    docs/d49-command-control-center.md
+    docs/tutorials/command-control-center.md
 git commit -m "docs: describe transactional gateway upgrades"
 ```

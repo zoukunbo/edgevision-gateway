@@ -189,4 +189,4 @@ open_fds_after=5
 
 1. 检查全部 Git 差异并创建 D29 提交；
 2. 将提交哈希、文档路径、实际工时和阻塞项回填到 D29 任务；
-3. 以 `docs/d29-ok1126b-board-evidence.md` 作为板端复现证据。
+3. 以 `docs/records/d29-ok1126b-board-evidence.md` 作为板端复现证据。

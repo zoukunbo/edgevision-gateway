@@ -67,7 +67,7 @@
 - 证据包括：
   - `hardware/rs485/2026-08-30-source-stop.log`
   - `hardware/rs485/2026-08-31-stm32-temt-no-delay-200506.log`
-  - `docs/d36-closeout.md`
+  - `docs/records/d36-closeout.md`
 
 仍未完成的严格验收项：
 
@@ -91,7 +91,7 @@
 - 证据包括：
   - `hardware/rs485/2026-08-31-tx-complete-ctest.log`
   - `hardware/rs485/2026-08-30-source-stop.log`
-  - `docs/stm32-dht11-modbus-read.md`
+  - `docs/records/stm32-dht11-modbus-read.md`
 
 仍未完成的严格验收项：
 
@@ -188,7 +188,7 @@
 - 板卡重启后挂载、服务和数据库终态曾恢复。
 - 证据：
   - `hardware/storage/systemd-nfs-board-deployment-2026-09-01.log`
-  - `docs/systemd-nfs-board-deployment-2026-09-01.md`
+  - `docs/records/systemd-nfs-board-deployment-2026-09-01.md`
 
 仍未完成的严格验收项：
 
@@ -209,7 +209,7 @@
 - 输入文件和证据日志有 SHA256。
 - 该数据从 pending、PUBACK、sent、独立订阅直到重启终态可以逐项对应。
 - 证据：
-  - `docs/d42-auditable-replay-2026-09-01.md`
+  - `docs/records/d42-auditable-replay-2026-09-01.md`
   - `hardware/storage/d42-auditable-replay-2026-09-01.log`
 
 仍未完成的严格验收项：

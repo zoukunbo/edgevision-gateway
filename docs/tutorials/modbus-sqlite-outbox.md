@@ -1265,9 +1265,11 @@ NFS 是远程挂载。板端从 WSL 导出目录读取程序；WSL 不可用时�
    - 看这四个是独立 executable。
 7. 根 `CMakeLists.txt` 与 `core/gateway.c`
    - 核对默认 Gateway 尚未链接 storage，也尚未使用正式 Modbus 源。
-8. `docs/systemd-nfs-board-deployment-2026-09-01.md`
-   - 理解板端文件、挂载、脚本和 oneshot 服务的关系。
-9. `docs/week06-d36-d42-audit-and-next-plan-2026-09-02.md`
+8. `docs/operations/nfs-development.md`
+   - 学习当前 NFS 导出、挂载和排障入口。
+9. `docs/operations/systemd-board-deployment.md`
+   - 理解自动挂载和服务托管。
+10. `docs/records/week06-d36-d42-audit-and-next-plan-2026-09-02.md`
    - 对照严格缺口和后续实现顺序。
 
 ## 26. 下一步怎样安排
